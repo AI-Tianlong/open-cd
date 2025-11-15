@@ -119,12 +119,13 @@ Please refer [inference](https://github.com/likyoo/open-cd/blob/main/docs/infere
 If you find this project useful in your research, please cite:
 
 ```bibtex
-@article{opencd,
-  title   = {{Open-CD}: A Comprehensive Toolbox for Change Detection},
+@inproceedings{opencd,
+  title   = {Open-cd: A comprehensive toolbox for change detection},
   author  = {Li, Kaiyu and Jiang, Jiawei and Codegoni, Andrea and Han, Chengxi and Deng, Yupeng and Chen, Keyan and Zheng, Zhuo and
              Chen, Hao and Liu, Ziyuan and Gu, Yuantao and Zou, Zhengxia and Shi, Zhenwei and Fang, Sheng and Meng, Deyu and Wang, Zhi and Cao, Xiangyong},
-  journal= {arXiv preprint arXiv:2407.15317},
-  year={2024}
+  booktitle={Proceedings of the 33rd ACM International Conference on Multimedia},
+  pages={13608--13612},
+  year={2025}
 }
 ```
 You might also consider citing:
