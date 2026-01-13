@@ -1,6 +1,3 @@
-from 
-
-
 # dataset settings
 dataset_type = 'LEVIR_CD_Dataset'
 data_root = 'data/LEVIR-CD'
