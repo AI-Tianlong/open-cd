@@ -210,12 +210,13 @@ class DualInputSegDataPreProcessor(BaseDataPreprocessor):
             Dict: Data in the same format as the model input.
         """
         data = self.cast_data(data)  # type: ignore
-        inputs = data['inputs']
+        inputs = data['inputs']   # [8,512,512] [4,512,512][4,512,512] concat的
         data_samples = data.get('data_samples', None)
         # TODO: whether normalize should be after stack_batch
+
         if self.channel_conversion and inputs[0].size(0) == 6:
             inputs = [_input[[2, 1, 0, 5, 4, 3], ...] for _input in inputs]
-
+            
         inputs = [_input.float() for _input in inputs]
         if self._enable_normalize:
             inputs = [(_input - self.mean) / self.std for _input in inputs]

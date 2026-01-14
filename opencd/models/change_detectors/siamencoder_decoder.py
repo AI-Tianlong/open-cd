@@ -84,7 +84,7 @@ class SiamEncoderDecoder(BaseSegmentor):
                  data_preprocessor: OptConfigType = None,
                  pretrained: Optional[str] = None,
                  init_cfg: OptMultiConfig = None,
-                 backbone_inchannels: int = 3):
+                 backbone_inchannels: int = 4):
         super().__init__(
             data_preprocessor=data_preprocessor, init_cfg=init_cfg)
         if pretrained is not None:
@@ -99,7 +99,7 @@ class SiamEncoderDecoder(BaseSegmentor):
 
         self.train_cfg = train_cfg
         self.test_cfg = test_cfg
-        self.backbone_inchannels = backbone_inchannels # RGB: 3
+        self.backbone_inchannels = backbone_inchannels # RGB:3  RGB-Nir:4
 
         assert self.with_decode_head
 
@@ -123,11 +123,13 @@ class SiamEncoderDecoder(BaseSegmentor):
     def extract_feat(self, inputs: Tensor) -> List[Tensor]:
         """Extract features from images."""
         # `in_channels` is not in the ATTRIBUTE for some backbone CLASS.
-        img_from, img_to = torch.split(inputs, self.backbone_inchannels, dim=1)
-        feat_from = self.backbone(img_from)
-        feat_to = self.backbone(img_to)
+
+        img_from, img_to = torch.split(inputs, self.backbone_inchannels, dim=1) # [B,8,512,512] --> [B,4,512,512][B,4,512,512]
+        feat_from = self.backbone(img_from) # MixVisionTransformer [B,32,128,128][B,64,64,64][B,160,32,32][B,256,16,16]
+        feat_to = self.backbone(img_to)     # MixVisionTransformer [B,32,128,128][B,64,64,64][B,160,32,32][B,256,16,16]S
+
         if self.with_neck:
-            x = self.neck(feat_from, feat_to)
+            x = self.neck(feat_from, feat_to)                    # [B,64,128,128][4,128,64,64][4,320,32,32][4,512,16,16], 所以decoder_head 是 2*32，2*64, 2*160, 2*256
         else:
             raise ValueError('`NECK` is needed for `SiamEncoderDecoder`.')
         
@@ -148,10 +150,11 @@ class SiamEncoderDecoder(BaseSegmentor):
         """Run forward function and calculate loss for decode head in
         training."""
         losses = dict()
-        loss_decode = self.decode_head.loss(inputs, data_samples,
+        loss_decode = self.decode_head.loss(inputs, 
+                                            data_samples,
                                             self.train_cfg)
 
-        losses.update(add_prefix(loss_decode, 'decode'))
+        losses.update(add_prefix(loss_decode, 'decode')) 
         return losses
 
     def _auxiliary_head_forward_train(self, inputs: List[Tensor],

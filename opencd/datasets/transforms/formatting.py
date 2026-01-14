@@ -41,9 +41,15 @@ class MultiImgPackSegInputs(BaseTransform):
     """
 
     def __init__(self,
-                 meta_keys=('img_path', 'seg_map_path', 'seg_map_path_from', 
-                            'seg_map_path_to', 'ori_shape','img_shape', 
-                            'pad_shape', 'scale_factor', 'flip',
+                 meta_keys=('img_path', 
+                            'seg_map_path', 
+                            'seg_map_path_from', 
+                            'seg_map_path_to', 
+                            'ori_shape',
+                            'img_shape', 
+                            'pad_shape', 
+                            'scale_factor', 
+                            'flip',
                             'flip_direction')):
         self.meta_keys = meta_keys
 
@@ -73,6 +79,7 @@ class MultiImgPackSegInputs(BaseTransform):
                 return img
             
             imgs = [_transform_img(img) for img in results['img']]
+            
             imgs = torch.cat(imgs, axis=0) # -> (6, H, W)
             packed_results['inputs'] = imgs
 

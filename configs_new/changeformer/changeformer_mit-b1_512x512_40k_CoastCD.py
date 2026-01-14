@@ -1,4 +1,3 @@
-
 from torch.nn.modules.batchnorm import SyncBatchNorm as SyncBN
 from torch.optim import AdamW
 
@@ -33,24 +32,27 @@ from mmseg.engine.hooks.visualization_hook import SegVisualizationHook
 from mmengine.config import read_base
 
 with read_base():
-    from .._base_.datasets.levir_cd import *
-    # from ..common.standard_256x256_40k_levircd import *
-    # from .._base_.schedules.schedule_40k import *
-    # from .._base_.models.changeformer_mit_b0 import *
+    from .._base_.datasets.coast_cd import *
+    from .._base_.default_runtime import * # 这里会影响是iter输出，还是epoch输出
+
+
+num_classes = 3 # unchanged water_to_land  land_to_water
 
 # checkpoint = 'https://download.openmmlab.com/mmsegmentation/v0.5/pretrain/segformer/mit_b1_20220624-02e5a6a1.pth'  # noqa
-checkpoint = 'checkpoints/segformer/mit_b1_20220624-02e5a6a1.pth'
+checkpoint = 'checkpoints/segformer/4chan/mit_b1_4chan.pth'
 
+crop_size = (512,512)
 norm_cfg = dict(type=SyncBN, requires_grad=True)
 data_preprocessor = dict(
     type=DualInputSegDataPreProcessor,
-    mean=[123.675, 116.28, 103.53] * 2,
-    std=[58.395, 57.12, 57.375] * 2,
-    bgr_to_rgb=True,
-    size_divisor=32,
+    mean=[0.0, 0.0, 0.0, 0.0] * 2,
+    std=[10000.0, 10000.0, 10000.0, 10000.0] * 2,
+    size = crop_size,
+    # size_divisor=32,
     pad_val=0,
     seg_pad_val=255,
-    test_cfg=dict(size_divisor=32))
+    # test_cfg=dict(size_divisor=32)
+    )
 
 model = dict(
     type=SiamEncoderDecoder,
@@ -58,7 +60,7 @@ model = dict(
     pretrained=checkpoint,
     backbone=dict(
         type=MixVisionTransformer,
-        in_channels=3,
+        in_channels=4,
         embed_dims=64, 
         num_stages=4,
         num_layers=[2, 2, 2, 2],
@@ -71,15 +73,17 @@ model = dict(
         drop_rate=0.0,
         attn_drop_rate=0.0,
         drop_path_rate=0.1),
-    neck=dict(type=FeatureFusionNeck, policy='concat'),
+
+    neck=dict(type=FeatureFusionNeck, 
+              policy='concat'),
     
     decode_head=dict(
         type=SegformerHead,
-        in_channels=[v * 2 for v in [64, 128, 320, 512]],
+        in_channels=[v * 2 for v in [64, 128, 320, 512]], 
         in_index=[0, 1, 2, 3],
         channels=256,
         dropout_ratio=0.1,
-        num_classes=2,
+        num_classes=num_classes,
         norm_cfg=norm_cfg,
         align_corners=False,
         loss_decode=dict(
@@ -119,22 +123,20 @@ param_scheduler = [
     )
 ]
 
-
 # training schedule for 40k
-train_cfg = dict(type=IterBasedTrainLoop, max_iters=40000, val_interval=4000)
+train_cfg = dict(type=IterBasedTrainLoop, max_iters=40000, val_interval=1000)
 val_cfg = dict(type=ValLoop)
 test_cfg = dict(type=TestLoop)
+
 default_hooks = dict(
     timer=dict(type=IterTimerHook),
     logger=dict(type=LoggerHook, interval=50, log_metric_by_epoch=False),
     param_scheduler=dict(type=ParamSchedulerHook),
-    checkpoint=dict(type=CheckpointHook, by_epoch=False, interval=4000,
-                    save_best='mIoU'),
+    checkpoint=dict(type=CheckpointHook, by_epoch=False, interval=2000, save_best='mIoU', max_keep_ckpts=4),
     sampler_seed=dict(type=DistSamplerSeedHook),
     visualization=dict(type=SegVisualizationHook))
     # visualization=dict(type=CDVisualizationHook, interval=1, 
     #                    img_shape=(1024, 1024, 3)))
-
 
 val_evaluator = dict(
     type=IoUMetric, iou_metrics=['mIoU', 'mFscore'])  # 'mDice', 'mFscore'

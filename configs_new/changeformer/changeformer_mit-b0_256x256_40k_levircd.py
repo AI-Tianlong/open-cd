@@ -1,6 +1,3 @@
-
-# checkpoint = 'https://download.openmmlab.com/mmsegmentation/v0.5/pretrain/segformer/mit_b0_20220624-7e0fe6dd.pth'  # noqa
-
 from torch.nn.modules.batchnorm import SyncBatchNorm as SyncBN
 from torch.optim import AdamW
 
@@ -35,12 +32,13 @@ from mmseg.engine.hooks.visualization_hook import SegVisualizationHook
 from mmengine.config import read_base
 
 with read_base():
-
     from .._base_.datasets.levir_cd import *
     # from ..common.standard_256x256_40k_levircd import *
     # from .._base_.schedules.schedule_40k import *
     # from .._base_.models.changeformer_mit_b0 import *
 
+
+# checkpoint = 'https://download.openmmlab.com/mmsegmentation/v0.5/pretrain/segformer/mit_b0_20220624-7e0fe6dd.pth'  # noqa
 checkpoint = 'checkpoints/segformer/mit_b0_20220624-7e0fe6dd.pth'
 
 norm_cfg = dict(type=SyncBN, requires_grad=True)
@@ -57,7 +55,7 @@ data_preprocessor = dict(
 model = dict(
     type=SiamEncoderDecoder,
     data_preprocessor=data_preprocessor,
-    pretrained=None,
+    pretrained=checkpoint,
     backbone=dict(
         type=MixVisionTransformer,
         in_channels=3,
