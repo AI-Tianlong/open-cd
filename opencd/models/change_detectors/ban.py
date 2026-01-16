@@ -117,7 +117,7 @@ class BAN(BaseSegmentor):
         Then decode the class embedding and visual feature into a semantic
         segmentation map of the same size as input.
         """
-        img_from, img_to = torch.split(inputs, 3, dim=1)
+        img_from, img_to = torch.split(inputs, 4, dim=1)
 
         fm_img_from, fm_img_to = img_from, img_to
         if self.asymetric_input:
@@ -155,7 +155,7 @@ class BAN(BaseSegmentor):
         Returns:
             dict[str, Tensor]: a dictionary of loss components
         """
-        img_from, img_to = torch.split(inputs, 3, dim=1)
+        img_from, img_to = torch.split(inputs, 4, dim=1)
 
         fm_img_from, fm_img_to = img_from, img_to
         if self.asymetric_input:
@@ -225,7 +225,7 @@ class BAN(BaseSegmentor):
         Returns:
             Tensor: Forward output of model without any post-processes.
         """
-        img_from, img_to = torch.split(inputs, 3, dim=1)
+        img_from, img_to = torch.split(inputs, 4, dim=1)
 
         fm_img_from, fm_img_to = img_from, img_to
         if self.asymetric_input:

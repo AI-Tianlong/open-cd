@@ -4,17 +4,25 @@ from torch.optim import AdamW
 
 # Encoder_Decoder
 from opencd.models.change_detectors.siamencoder_decoder import SiamEncoderDecoder
+from opencd.models.change_detectors.ban import BAN
 # DataPreProcessor
 from opencd.models.data_preprocessor import DualInputSegDataPreProcessor
 # Backbone
 from mmseg.models.backbones.resnet import ResNetV1c
+from mmseg.models.backbones.vit import VisionTransformer
+from mmseg.models.text_encoder.clip_text_encoder import QuickGELU
+
 # Neck
 from opencd.models.necks.feature_fusion import FeatureFusionNeck
 # Decoder_Head
 from opencd.models.decode_heads.bit_head import BITHead
+from opencd.models.decode_heads.ban_head import BitemporalAdapterHead
+from opencd.models.decode_heads.ban_utils import BAN_BITHead
 # Loss
 from mmseg.models.losses.cross_entropy_loss import CrossEntropyLoss
+from mmseg.models.losses.dice_loss import DiceLoss
 # Optimizer
+from mmengine.optim.optimizer import AmpOptimWrapper
 from mmengine.optim.optimizer import OptimWrapper
 from mmengine.optim.scheduler.lr_scheduler import LinearLR, PolyLR
 # Evaluation
@@ -36,81 +44,103 @@ with read_base():
     from .._base_.datasets.coast_cd import *
     from .._base_.default_runtime import * # 这里会影响是iter输出，还是epoch输出
 
-bit_norm_cfg = dict(type=LN, requires_grad=True)
-
 num_classes = 3 # unchanged water_to_land  land_to_water
-
-# checkpoint = 'open-mmlab://resnet18_v1c'  # noqa
-checkpoint = 'checkpoints/resnetv1c/4chan/resnet18_v1c-4chan.pth'
-
 crop_size = (512,512)
 norm_cfg = dict(type=SyncBN, requires_grad=True)
+
 data_preprocessor = dict(
     type=DualInputSegDataPreProcessor,
     mean=[0.0, 0.0, 0.0, 0.0] * 2,
     std=[10000.0, 10000.0, 10000.0, 10000.0] * 2,
-    size = crop_size,
-    # size_divisor=32,
+    # size = crop_size,
+    size_divisor=32, 
     pad_val=0,
     seg_pad_val=255,
-    # test_cfg=dict(size_divisor=32)
+    test_cfg=dict(size_divisor=32)
     )
 
+checkpoint_r18 = 'checkpoints/resnetv1c/4chan/resnet18_v1c-4chan.pth'
+clip_vit = 'checkpoints/BAN/clip_vit-base-patch16-224_3rdparty-d08f8887.pth'
+
 model = dict(
-    type=SiamEncoderDecoder,
-    data_preprocessor=data_preprocessor,
-    pretrained=checkpoint,
-    backbone=dict(
-        type=ResNetV1c,
+    type=BAN,
+        data_preprocessor=data_preprocessor,
+        pretrained=clip_vit,
+        asymetric_input=True,
+
+    encoder_resolution=dict(
+        size=(224, 224),
+        mode='bilinear'),
+
+    image_encoder=dict(
+        type=VisionTransformer,
+        img_size=(224, 224),
+        patch_size=16,
+        patch_pad=0,
         in_channels=4,
-        depth=18,
-        num_stages=3,
-        out_indices=(2,),
-        dilations=(1, 1, 1),
-        strides=(1, 2, 1),
-        norm_cfg=norm_cfg,
+        embed_dims=768,
+        num_layers=9,
+        num_heads=12,
+        mlp_ratio=4,
+        out_origin=False,
+        out_indices=(2, 5, 8),
+        qkv_bias=True,
+        drop_rate=0.0,
+        attn_drop_rate=0.0,
+        drop_path_rate=0.0,
+        with_cls_token=True,
+        output_cls_token=True,
+        patch_bias=False,
+        pre_norm=True,
+        norm_cfg=dict(type=LN, eps=1e-5),
+        act_cfg=dict(type=QuickGELU),
         norm_eval=False,
-        style='pytorch',
-        contract_dilation=True),
+        interpolate_mode='bicubic',
+        # frozen_exclude=['pos_embed'],
+        frozen_exclude=[]
+        ),
 
-    neck=dict(
-        type=FeatureFusionNeck, 
-        policy='concat',
-        out_indices=(0,)),
-    
     decode_head=dict(
-        type=BITHead,
-        num_classes=num_classes,
-        in_channels=256,
-        channels=32,
-        embed_dims=64,
-        enc_depth=1,
-        enc_with_pos=True,
-        dec_depth=8,
-        num_heads=8,
-        drop_rate=0.,
-        use_tokenizer=True,
-        token_len=4,
-        upsample_size=4,
-        norm_cfg=bit_norm_cfg,
-        align_corners=False,
-        loss_decode=dict(
-            type=CrossEntropyLoss, use_sigmoid=False, loss_weight=1.0)),
+        type=BitemporalAdapterHead,
+        loss_decode=dict(type=CrossEntropyLoss, use_sigmoid=False, loss_weight=1.0),
 
-    # model training and testing settings
-    train_cfg=dict(),
-    test_cfg=dict(mode='whole'))
-
-# optimizer
-optimizer=dict(
-    type=AdamW, 
-    lr=0.001,
-    betas=(0.9, 0.999), 
-    weight_decay=0.05)
+        ban_cfg=dict(
+            clip_channels=768,
+            fusion_index=[0, 1, 2],
+            side_enc_cfg=dict(
+                type='mmseg.ResNetV1c',
+                init_cfg=dict(type='Pretrained', checkpoint=checkpoint_r18),
+                in_channels=4,
+                depth=18,
+                num_stages=3,
+                out_indices=(2,),
+                dilations=(1, 1, 1),
+                strides=(1, 2, 1),
+                norm_cfg=dict(type=SyncBN, requires_grad=True),
+                norm_eval=False,
+                style='pytorch',
+                contract_dilation=True)),
+        ban_dec_cfg=dict(
+            type=BAN_BITHead,
+            in_channels=256,
+            channels=32,
+            num_classes=num_classes)),
+            
+    test_cfg=dict(mode='slide', crop_size=crop_size, stride=(crop_size[0]//2, crop_size[1]//2)))
 
 optim_wrapper = dict(
-    type=OptimWrapper,
-    optimizer=optimizer)
+    type=AmpOptimWrapper,
+    optimizer=dict(
+        type=AdamW, lr=0.0001, betas=(0.9, 0.999), weight_decay=0.0001),
+    paramwise_cfg=dict(
+        custom_keys={
+            'img_encoder': dict(lr_mult=0.1, decay_mult=1.0),
+            'norm': dict(decay_mult=0.),
+            'mask_decoder': dict(lr_mult=10.)
+        }),
+    loss_scale='dynamic',
+    clip_grad=dict(max_norm=0.01, norm_type=2))
+
 
 # learning policy
 param_scheduler = [

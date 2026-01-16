@@ -4,6 +4,7 @@ from torch.optim import AdamW
 
 # Encoder_Decoder
 from opencd.models.change_detectors.siamencoder_decoder import SiamEncoderDecoder
+from opencd.models.change_detectors.atl_coastcdnet_siamencoder_decoder import CoastCDNet_SiamEncoderDecoder
 # DataPreProcessor
 from opencd.models.data_preprocessor import DualInputSegDataPreProcessor
 # Backbone
@@ -12,8 +13,11 @@ from mmseg.models.backbones.resnet import ResNetV1c
 from opencd.models.necks.feature_fusion import FeatureFusionNeck
 # Decoder_Head
 from opencd.models.decode_heads.bit_head import BITHead
+from opencd.models.decode_heads.coastcd_head import CoastCD_Head
+from mmseg.models.decode_heads.fcn_head import FCNHead
 # Loss
 from mmseg.models.losses.cross_entropy_loss import CrossEntropyLoss
+from mmseg.models.losses.dice_loss import DiceLoss
 # Optimizer
 from mmengine.optim.optimizer import OptimWrapper
 from mmengine.optim.scheduler.lr_scheduler import LinearLR, PolyLR
@@ -57,7 +61,7 @@ data_preprocessor = dict(
     )
 
 model = dict(
-    type=SiamEncoderDecoder,
+    type=CoastCDNet_SiamEncoderDecoder,
     data_preprocessor=data_preprocessor,
     pretrained=checkpoint,
     backbone=dict(
@@ -65,9 +69,10 @@ model = dict(
         in_channels=4,
         depth=18,
         num_stages=3,
-        out_indices=(2,),
+        out_indices=(2,), #
+        # out_indices=(0,1,2),
         dilations=(1, 1, 1),
-        strides=(1, 2, 1),
+        strides=(1, 2, 1),  # 原来是[1,2,2,2], 文中说，把最后一个的stride变成1，将最后两个阶段的步幅调整为1，并在ResNet后添加一个点卷积（输出通道数C=32）以减少特征维度，随后接一个双线性插值层，从而获得下采样因子为4的输出特征图，以减少空间细节的丢失。
         norm_cfg=norm_cfg,
         norm_eval=False,
         style='pytorch',
@@ -76,12 +81,12 @@ model = dict(
     neck=dict(
         type=FeatureFusionNeck, 
         policy='concat',
-        out_indices=(0,)),
+        out_indices=(0,)),  # 直接拼接
     
     decode_head=dict(
-        type=BITHead,
+        type=CoastCD_Head,
         num_classes=num_classes,
-        in_channels=256,
+        in_channels=256, # 和restnet stage2的输出通道一样。
         channels=32,
         embed_dims=64,
         enc_depth=1,
@@ -94,8 +99,49 @@ model = dict(
         upsample_size=4,
         norm_cfg=bit_norm_cfg,
         align_corners=False,
-        loss_decode=dict(
-            type=CrossEntropyLoss, use_sigmoid=False, loss_weight=1.0)),
+
+        binary_change_head=dict(
+            type=FCNHead,
+            in_channels=512,
+            in_index=1,
+            channels=128,
+            num_convs=1,
+            concat_input=False,
+            dropout_ratio=0.1,
+            num_classes=2,
+            norm_cfg=norm_cfg,
+            align_corners=False,
+            loss_decode=dict(
+                type=CrossEntropyLoss, 
+                use_sigmoid=False, 
+                loss_weight=1.0,
+                class_weight=[0.0845, 2.9861])),
+
+        semantic_change_head=dict(
+            type=FCNHead,
+            in_channels=512,
+            in_index=1,
+            channels=128,
+            num_convs=1,
+            concat_input=False,
+            dropout_ratio=0.1,
+            num_classes=num_classes,
+            norm_cfg=norm_cfg,
+            align_corners=False,
+            loss_decode=dict(
+                type=CrossEntropyLoss, 
+                use_sigmoid=False, 
+                loss_weight=1.0,
+                class_weight=[0.0845, 1.0000, 1.9861])),
+
+        loss_decode=dict(type=CrossEntropyLoss, 
+                         use_sigmoid=False, 
+                         loss_weight=1.0, 
+                         # 直接使用脚本计算出的精确值，这是最科学的
+                         class_weight=[0.0845, 1.0000, 1.9861] 
+                    ),
+
+        ),
 
     # model training and testing settings
     train_cfg=dict(),
@@ -126,8 +172,9 @@ param_scheduler = [
     )
 ]
 
+
 # training schedule for 40k
-train_cfg = dict(type=IterBasedTrainLoop, max_iters=40000, val_interval=4000)
+train_cfg = dict(type=IterBasedTrainLoop, max_iters=40000, val_interval=2000)
 val_cfg = dict(type=ValLoop)
 test_cfg = dict(type=TestLoop)
 

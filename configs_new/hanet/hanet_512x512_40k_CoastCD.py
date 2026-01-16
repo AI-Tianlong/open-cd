@@ -1,17 +1,16 @@
 from torch.nn.modules.batchnorm import SyncBatchNorm as SyncBN
-from torch.nn.modules.normalization import LayerNorm as LN
 from torch.optim import AdamW
 
 # Encoder_Decoder
-from opencd.models.change_detectors.siamencoder_decoder import SiamEncoderDecoder
+from opencd.models.change_detectors.dual_input_encoder_decoder import DIEncoderDecoder
 # DataPreProcessor
 from opencd.models.data_preprocessor import DualInputSegDataPreProcessor
 # Backbone
-from mmseg.models.backbones.resnet import ResNetV1c
+from opencd.models.backbones.hanet import HAN
 # Neck
 from opencd.models.necks.feature_fusion import FeatureFusionNeck
 # Decoder_Head
-from opencd.models.decode_heads.bit_head import BITHead
+from mmseg.models.decode_heads.fcn_head import FCNHead
 # Loss
 from mmseg.models.losses.cross_entropy_loss import CrossEntropyLoss
 # Optimizer
@@ -36,12 +35,8 @@ with read_base():
     from .._base_.datasets.coast_cd import *
     from .._base_.default_runtime import * # 这里会影响是iter输出，还是epoch输出
 
-bit_norm_cfg = dict(type=LN, requires_grad=True)
 
 num_classes = 3 # unchanged water_to_land  land_to_water
-
-# checkpoint = 'open-mmlab://resnet18_v1c'  # noqa
-checkpoint = 'checkpoints/resnetv1c/4chan/resnet18_v1c-4chan.pth'
 
 crop_size = (512,512)
 norm_cfg = dict(type=SyncBN, requires_grad=True)
@@ -56,61 +51,39 @@ data_preprocessor = dict(
     # test_cfg=dict(size_divisor=32)
     )
 
-model = dict(
-    type=SiamEncoderDecoder,
-    data_preprocessor=data_preprocessor,
-    pretrained=checkpoint,
-    backbone=dict(
-        type=ResNetV1c,
-        in_channels=4,
-        depth=18,
-        num_stages=3,
-        out_indices=(2,),
-        dilations=(1, 1, 1),
-        strides=(1, 2, 1),
-        norm_cfg=norm_cfg,
-        norm_eval=False,
-        style='pytorch',
-        contract_dilation=True),
+base_channels = 40
 
-    neck=dict(
-        type=FeatureFusionNeck, 
-        policy='concat',
-        out_indices=(0,)),
-    
+model = dict(
+    type=DIEncoderDecoder,
+    data_preprocessor=data_preprocessor,
+    pretrained=None,
+    backbone=dict(
+        type=HAN,
+        in_channels=4,
+        base_channel=base_channels),
+
     decode_head=dict(
-        type=BITHead,
+        type=FCNHead,
+        in_channels=base_channels * 2,
+        channels=base_channels * 2,
+        in_index=-1,
+        num_convs=0,
+        concat_input=False,
         num_classes=num_classes,
-        in_channels=256,
-        channels=32,
-        embed_dims=64,
-        enc_depth=1,
-        enc_with_pos=True,
-        dec_depth=8,
-        num_heads=8,
-        drop_rate=0.,
-        use_tokenizer=True,
-        token_len=4,
-        upsample_size=4,
-        norm_cfg=bit_norm_cfg,
-        align_corners=False,
         loss_decode=dict(
             type=CrossEntropyLoss, use_sigmoid=False, loss_weight=1.0)),
-
     # model training and testing settings
     train_cfg=dict(),
     test_cfg=dict(mode='whole'))
 
-# optimizer
+# optimizers
 optimizer=dict(
     type=AdamW, 
     lr=0.001,
     betas=(0.9, 0.999), 
     weight_decay=0.05)
 
-optim_wrapper = dict(
-    type=OptimWrapper,
-    optimizer=optimizer)
+optim_wrapper = dict(type=OptimWrapper, optimizer=optimizer)
 
 # learning policy
 param_scheduler = [

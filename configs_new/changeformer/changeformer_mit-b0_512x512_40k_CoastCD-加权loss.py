@@ -1,5 +1,4 @@
 from torch.nn.modules.batchnorm import SyncBatchNorm as SyncBN
-from torch.nn.modules.normalization import LayerNorm as LN
 from torch.optim import AdamW
 
 # Encoder_Decoder
@@ -7,13 +6,14 @@ from opencd.models.change_detectors.siamencoder_decoder import SiamEncoderDecode
 # DataPreProcessor
 from opencd.models.data_preprocessor import DualInputSegDataPreProcessor
 # Backbone
-from mmseg.models.backbones.resnet import ResNetV1c
+from mmseg.models.backbones.mit import MixVisionTransformer
 # Neck
 from opencd.models.necks.feature_fusion import FeatureFusionNeck
 # Decoder_Head
-from opencd.models.decode_heads.bit_head import BITHead
+from mmseg.models.decode_heads.segformer_head import SegformerHead
 # Loss
 from mmseg.models.losses.cross_entropy_loss import CrossEntropyLoss
+from mmseg.models.losses.dice_loss import DiceLoss
 # Optimizer
 from mmengine.optim.optimizer import OptimWrapper
 from mmengine.optim.scheduler.lr_scheduler import LinearLR, PolyLR
@@ -36,12 +36,11 @@ with read_base():
     from .._base_.datasets.coast_cd import *
     from .._base_.default_runtime import * # 这里会影响是iter输出，还是epoch输出
 
-bit_norm_cfg = dict(type=LN, requires_grad=True)
 
 num_classes = 3 # unchanged water_to_land  land_to_water
 
-# checkpoint = 'open-mmlab://resnet18_v1c'  # noqa
-checkpoint = 'checkpoints/resnetv1c/4chan/resnet18_v1c-4chan.pth'
+# checkpoint = 'https://download.openmmlab.com/mmsegmentation/v0.5/pretrain/segformer/mit_b0_20220624-7e0fe6dd.pth'  # noqa
+checkpoint = 'checkpoints/segformer/4chan/mit_b0_4chan.pth'
 
 crop_size = (512,512)
 norm_cfg = dict(type=SyncBN, requires_grad=True)
@@ -61,42 +60,48 @@ model = dict(
     data_preprocessor=data_preprocessor,
     pretrained=checkpoint,
     backbone=dict(
-        type=ResNetV1c,
+        type=MixVisionTransformer,
         in_channels=4,
-        depth=18,
-        num_stages=3,
-        out_indices=(2,),
-        dilations=(1, 1, 1),
-        strides=(1, 2, 1),
-        norm_cfg=norm_cfg,
-        norm_eval=False,
-        style='pytorch',
-        contract_dilation=True),
+        embed_dims=32,
+        num_stages=4,
+        num_layers=[2, 2, 2, 2],
+        num_heads=[1, 2, 5, 8],
+        patch_sizes=[7, 3, 3, 3],
+        sr_ratios=[8, 4, 2, 1],
+        out_indices=(0, 1, 2, 3),
+        mlp_ratio=4,
+        qkv_bias=True,
+        drop_rate=0.0,
+        attn_drop_rate=0.0,
+        drop_path_rate=0.1),
 
-    neck=dict(
-        type=FeatureFusionNeck, 
-        policy='concat',
-        out_indices=(0,)),
+    neck=dict(type=FeatureFusionNeck, 
+              policy='concat'),
     
     decode_head=dict(
-        type=BITHead,
+        type=SegformerHead,
+        in_channels=[v * 2 for v in [32, 64, 160, 256]], 
+        in_index=[0, 1, 2, 3],
+        channels=256,
+        dropout_ratio=0.1,
         num_classes=num_classes,
-        in_channels=256,
-        channels=32,
-        embed_dims=64,
-        enc_depth=1,
-        enc_with_pos=True,
-        dec_depth=8,
-        num_heads=8,
-        drop_rate=0.,
-        use_tokenizer=True,
-        token_len=4,
-        upsample_size=4,
-        norm_cfg=bit_norm_cfg,
+        norm_cfg=norm_cfg,
         align_corners=False,
-        loss_decode=dict(
-            type=CrossEntropyLoss, use_sigmoid=False, loss_weight=1.0)),
-
+        loss_decode=[
+                    dict(type=CrossEntropyLoss, 
+                         use_sigmoid=False, 
+                         loss_weight=1.0, 
+                         # 直接使用脚本计算出的精确值，这是最科学的
+                         class_weight=[0.0845, 1.0000, 1.9861] 
+                    ),
+                    dict(type=DiceLoss, 
+                         use_sigmoid=True, 
+                         # Dice 本身对不平衡有抗性，所以给它更高的 Loss 权重
+                         loss_weight=3.0,
+                         loss_name='loss_dice'
+                    )
+                    ],
+        ),
     # model training and testing settings
     train_cfg=dict(),
     test_cfg=dict(mode='whole'))
@@ -110,7 +115,13 @@ optimizer=dict(
 
 optim_wrapper = dict(
     type=OptimWrapper,
-    optimizer=optimizer)
+    optimizer=optimizer,
+    paramwise_cfg=dict(
+        custom_keys={
+            'pos_block': dict(decay_mult=0.),
+            'norm': dict(decay_mult=0.),
+            'head': dict(lr_mult=10.)
+        }))
 
 # learning policy
 param_scheduler = [

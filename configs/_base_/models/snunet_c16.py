@@ -9,6 +9,8 @@ data_preprocessor = dict(
     pad_val=0,
     seg_pad_val=255,
     test_cfg=dict(size_divisor=32))
+
+
 base_channels = 16
 model = dict(
     type='DIEncoderDecoder',

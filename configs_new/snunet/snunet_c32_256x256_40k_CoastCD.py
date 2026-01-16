@@ -4,16 +4,20 @@ from torch.optim import AdamW
 
 # Encoder_Decoder
 from opencd.models.change_detectors.siamencoder_decoder import SiamEncoderDecoder
+from opencd.models.change_detectors.dual_input_encoder_decoder import DIEncoderDecoder
 # DataPreProcessor
 from opencd.models.data_preprocessor import DualInputSegDataPreProcessor
 # Backbone
 from mmseg.models.backbones.resnet import ResNetV1c
+from opencd.models.backbones.snunet import SNUNet_ECAM
 # Neck
 from opencd.models.necks.feature_fusion import FeatureFusionNeck
 # Decoder_Head
 from opencd.models.decode_heads.bit_head import BITHead
+from mmseg.models.decode_heads.fcn_head import FCNHead
 # Loss
 from mmseg.models.losses.cross_entropy_loss import CrossEntropyLoss
+from mmseg.models.losses.dice_loss import DiceLoss
 # Optimizer
 from mmengine.optim.optimizer import OptimWrapper
 from mmengine.optim.scheduler.lr_scheduler import LinearLR, PolyLR
@@ -56,46 +60,34 @@ data_preprocessor = dict(
     # test_cfg=dict(size_divisor=32)
     )
 
-model = dict(
-    type=SiamEncoderDecoder,
-    data_preprocessor=data_preprocessor,
-    pretrained=checkpoint,
-    backbone=dict(
-        type=ResNetV1c,
-        in_channels=4,
-        depth=18,
-        num_stages=3,
-        out_indices=(2,),
-        dilations=(1, 1, 1),
-        strides=(1, 2, 1),
-        norm_cfg=norm_cfg,
-        norm_eval=False,
-        style='pytorch',
-        contract_dilation=True),
 
-    neck=dict(
-        type=FeatureFusionNeck, 
-        policy='concat',
-        out_indices=(0,)),
-    
+base_channels = 16
+
+model = dict(
+    type=DIEncoderDecoder,
+    data_preprocessor=data_preprocessor,
+    pretrained=None,
+    backbone=dict(
+        type=SNUNet_ECAM,
+        in_channels=4,
+        base_channel=base_channels),
+
     decode_head=dict(
-        type=BITHead,
+        type=FCNHead,
+        in_channels=base_channels * 4,
+        channels=base_channels * 4,
+        in_index=-1,
+        num_convs=0,
+        concat_input=False,
         num_classes=num_classes,
-        in_channels=256,
-        channels=32,
-        embed_dims=64,
-        enc_depth=1,
-        enc_with_pos=True,
-        dec_depth=8,
-        num_heads=8,
-        drop_rate=0.,
-        use_tokenizer=True,
-        token_len=4,
-        upsample_size=4,
-        norm_cfg=bit_norm_cfg,
-        align_corners=False,
-        loss_decode=dict(
-            type=CrossEntropyLoss, use_sigmoid=False, loss_weight=1.0)),
+        loss_decode=dict(type=CrossEntropyLoss, 
+                         use_sigmoid=False, 
+                         loss_weight=1.0, 
+                         # 直接使用脚本计算出的精确值，这是最科学的
+                         class_weight=[0.0845, 1.0000, 1.9861] 
+                    ),
+
+        ),
 
     # model training and testing settings
     train_cfg=dict(),
@@ -126,8 +118,9 @@ param_scheduler = [
     )
 ]
 
+
 # training schedule for 40k
-train_cfg = dict(type=IterBasedTrainLoop, max_iters=40000, val_interval=4000)
+train_cfg = dict(type=IterBasedTrainLoop, max_iters=40000, val_interval=2000)
 val_cfg = dict(type=ValLoop)
 test_cfg = dict(type=TestLoop)
 

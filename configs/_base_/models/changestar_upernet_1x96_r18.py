@@ -27,6 +27,7 @@ model = dict(
         norm_eval=False,
         style='pytorch',
         contract_dilation=True),
+        
     neck=dict(type='FeatureFusionNeck', policy='concat'),
     decode_head=dict(
         type='ChangeStarHead',

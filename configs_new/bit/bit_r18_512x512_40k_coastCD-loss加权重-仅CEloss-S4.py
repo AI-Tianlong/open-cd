@@ -14,6 +14,7 @@ from opencd.models.necks.feature_fusion import FeatureFusionNeck
 from opencd.models.decode_heads.bit_head import BITHead
 # Loss
 from mmseg.models.losses.cross_entropy_loss import CrossEntropyLoss
+from mmseg.models.losses.dice_loss import DiceLoss
 # Optimizer
 from mmengine.optim.optimizer import OptimWrapper
 from mmengine.optim.scheduler.lr_scheduler import LinearLR, PolyLR
@@ -65,7 +66,7 @@ model = dict(
         in_channels=4,
         depth=18,
         num_stages=3,
-        out_indices=(2,),
+        out_indices=(2,), # 
         dilations=(1, 1, 1),
         strides=(1, 2, 1),
         norm_cfg=norm_cfg,
@@ -94,8 +95,14 @@ model = dict(
         upsample_size=4,
         norm_cfg=bit_norm_cfg,
         align_corners=False,
-        loss_decode=dict(
-            type=CrossEntropyLoss, use_sigmoid=False, loss_weight=1.0)),
+        loss_decode=dict(type=CrossEntropyLoss, 
+                         use_sigmoid=False, 
+                         loss_weight=1.0, 
+                         # 直接使用脚本计算出的精确值，这是最科学的
+                         class_weight=[0.0845, 1.0000, 1.9861] 
+                    ),
+
+        ),
 
     # model training and testing settings
     train_cfg=dict(),
@@ -126,8 +133,9 @@ param_scheduler = [
     )
 ]
 
+
 # training schedule for 40k
-train_cfg = dict(type=IterBasedTrainLoop, max_iters=40000, val_interval=4000)
+train_cfg = dict(type=IterBasedTrainLoop, max_iters=40000, val_interval=2000)
 val_cfg = dict(type=ValLoop)
 test_cfg = dict(type=TestLoop)
 

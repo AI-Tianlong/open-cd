@@ -1,17 +1,22 @@
 from torch.nn.modules.batchnorm import SyncBatchNorm as SyncBN
-from torch.nn.modules.normalization import LayerNorm as LN
 from torch.optim import AdamW
+from torch.nn.modules.activation import ReLU
 
 # Encoder_Decoder
 from opencd.models.change_detectors.siamencoder_decoder import SiamEncoderDecoder
+from opencd.models.change_detectors.atl_A2Net_encoder_decoder import A2Net_EncoderDecoder
+
 # DataPreProcessor
 from opencd.models.data_preprocessor import DualInputSegDataPreProcessor
 # Backbone
-from mmseg.models.backbones.resnet import ResNetV1c
+from mmseg.models.backbones.mit import MixVisionTransformer
+from opencd.models.backbones.atl_lwganet import LWGANet, LWGANet_L2_1242_e96_k11_RELU
+
 # Neck
 from opencd.models.necks.feature_fusion import FeatureFusionNeck
 # Decoder_Head
-from opencd.models.decode_heads.bit_head import BITHead
+from mmseg.models.decode_heads.segformer_head import SegformerHead
+from opencd.models.decode_heads.atl_A2Net import A2Net_Head
 # Loss
 from mmseg.models.losses.cross_entropy_loss import CrossEntropyLoss
 # Optimizer
@@ -36,15 +41,14 @@ with read_base():
     from .._base_.datasets.coast_cd import *
     from .._base_.default_runtime import * # 这里会影响是iter输出，还是epoch输出
 
-bit_norm_cfg = dict(type=LN, requires_grad=True)
 
 num_classes = 3 # unchanged water_to_land  land_to_water
 
-# checkpoint = 'open-mmlab://resnet18_v1c'  # noqa
-checkpoint = 'checkpoints/resnetv1c/4chan/resnet18_v1c-4chan.pth'
+checkpoint = 'checkpoints/LWGANet/4chan/lwganet_l2_e296.pth'
 
 crop_size = (512,512)
 norm_cfg = dict(type=SyncBN, requires_grad=True)
+
 data_preprocessor = dict(
     type=DualInputSegDataPreProcessor,
     mean=[0.0, 0.0, 0.0, 0.0] * 2,
@@ -57,45 +61,36 @@ data_preprocessor = dict(
     )
 
 model = dict(
-    type=SiamEncoderDecoder,
+    type=A2Net_EncoderDecoder,
     data_preprocessor=data_preprocessor,
-    pretrained=checkpoint,
+    # pretrained=checkpoint,
     backbone=dict(
-        type=ResNetV1c,
-        in_channels=4,
-        depth=18,
-        num_stages=3,
-        out_indices=(2,),
-        dilations=(1, 1, 1),
-        strides=(1, 2, 1),
-        norm_cfg=norm_cfg,
-        norm_eval=False,
-        style='pytorch',
-        contract_dilation=True),
-
-    neck=dict(
-        type=FeatureFusionNeck, 
-        policy='concat',
-        out_indices=(0,)),
-    
-    decode_head=dict(
-        type=BITHead,
+        type=LWGANet, # LWGANet_L2_1242_e96_k11_RELU
+        in_chans=4,
         num_classes=num_classes,
-        in_channels=256,
-        channels=32,
-        embed_dims=64,
-        enc_depth=1,
-        enc_with_pos=True,
-        dec_depth=8,
-        num_heads=8,
-        drop_rate=0.,
-        use_tokenizer=True,
-        token_len=4,
-        upsample_size=4,
-        norm_cfg=bit_norm_cfg,
-        align_corners=False,
+        stem_dim=96,
+        depths=(1, 4, 4, 2),
+        att_kernel=(11, 11, 11, 11),
+        norm_layer=norm_cfg,
+        act_layer=ReLU,
+        drop_path_rate=0.1,
+        fork_feat=True,
+        init_cfg=dict(type='Pretrained', checkpoint=checkpoint),
+        ),
+
+    decode_head=dict(
+        type=A2Net_Head,
+        # NeighborFeatureAggregation([in_channels], channels)
+        # TemporalFusionModule(channels, channels)
+        in_channels = [96, 96, 192, 384, 768], # 传给 
+        in_index=[0, 1, 2, 3, 4],
+        channels = 32 * 2,  
+        num_classes = num_classes,
         loss_decode=dict(
-            type=CrossEntropyLoss, use_sigmoid=False, loss_weight=1.0)),
+            type=CrossEntropyLoss, 
+            use_sigmoid=False, 
+            loss_weight=1.0,
+            class_weight=[0.2, 2.0, 2.0])),
 
     # model training and testing settings
     train_cfg=dict(),
@@ -110,7 +105,8 @@ optimizer=dict(
 
 optim_wrapper = dict(
     type=OptimWrapper,
-    optimizer=optimizer)
+    optimizer=optimizer,
+   )
 
 # learning policy
 param_scheduler = [
@@ -127,7 +123,7 @@ param_scheduler = [
 ]
 
 # training schedule for 40k
-train_cfg = dict(type=IterBasedTrainLoop, max_iters=40000, val_interval=4000)
+train_cfg = dict(type=IterBasedTrainLoop, max_iters=40000, val_interval=1000)
 val_cfg = dict(type=ValLoop)
 test_cfg = dict(type=TestLoop)
 
@@ -135,7 +131,7 @@ default_hooks = dict(
     timer=dict(type=IterTimerHook),
     logger=dict(type=LoggerHook, interval=50, log_metric_by_epoch=False),
     param_scheduler=dict(type=ParamSchedulerHook),
-    checkpoint=dict(type=CheckpointHook, by_epoch=False, interval=1000, save_best='mIoU', max_keep_ckpts=4),
+    checkpoint=dict(type=CheckpointHook, by_epoch=False, interval=2000, save_best='mIoU', max_keep_ckpts=4),
     sampler_seed=dict(type=DistSamplerSeedHook),
     visualization=dict(type=SegVisualizationHook))
     # visualization=dict(type=CDVisualizationHook, interval=1, 

@@ -14,6 +14,7 @@ from opencd.models.necks.feature_fusion import FeatureFusionNeck
 from opencd.models.decode_heads.bit_head import BITHead
 # Loss
 from mmseg.models.losses.cross_entropy_loss import CrossEntropyLoss
+from mmseg.models.losses.dice_loss import DiceLoss
 # Optimizer
 from mmengine.optim.optimizer import OptimWrapper
 from mmengine.optim.scheduler.lr_scheduler import LinearLR, PolyLR
@@ -94,8 +95,21 @@ model = dict(
         upsample_size=4,
         norm_cfg=bit_norm_cfg,
         align_corners=False,
-        loss_decode=dict(
-            type=CrossEntropyLoss, use_sigmoid=False, loss_weight=1.0)),
+        loss_decode=[
+                    dict(type=CrossEntropyLoss, 
+                         use_sigmoid=False, 
+                         loss_weight=1.0, 
+                         # 直接使用脚本计算出的精确值，这是最科学的
+                         class_weight=[0.0845, 1.0000, 1.9861] 
+                    ),
+                    dict(type=DiceLoss, 
+                         use_sigmoid=True, 
+                         # Dice 本身对不平衡有抗性，所以给它更高的 Loss 权重
+                         loss_weight=3.0,
+                         loss_name='loss_dice'
+                    )
+                    ],
+        ),
 
     # model training and testing settings
     train_cfg=dict(),
@@ -115,19 +129,20 @@ optim_wrapper = dict(
 # learning policy
 param_scheduler = [
     dict(
-        type=LinearLR, start_factor=1e-6, by_epoch=False, begin=0, end=1000),
+        type=LinearLR, start_factor=1e-6, by_epoch=False, begin=0, end=1500),
     dict(
         type=PolyLR,
         power=1.0,
         begin=1000,
-        end=40000,
+        end=80000,
         eta_min=0.0,
         by_epoch=False,
     )
 ]
 
+
 # training schedule for 40k
-train_cfg = dict(type=IterBasedTrainLoop, max_iters=40000, val_interval=4000)
+train_cfg = dict(type=IterBasedTrainLoop, max_iters=40000, val_interval=2000)
 val_cfg = dict(type=ValLoop)
 test_cfg = dict(type=TestLoop)
 

@@ -15,8 +15,10 @@ from mmseg.utils import (ConfigType, OptConfigType, OptMultiConfig,
 from opencd.registry import MODELS
 
 
-@MODELS.register_module()
-class SiamEncoderDecoder(BaseSegmentor):
+from opencd.models.decode_heads.atl_A2Net import NeighborFeatureAggregation, TemporalFusionModule
+
+# @MODELS.register_module()
+class A2Net_EncoderDecoder(BaseSegmentor):
     """SiamEncoder Decoder change detector.
 
     EncoderDecoder typically consists of backbone, decode_head, auxiliary_head.
@@ -103,6 +105,12 @@ class SiamEncoderDecoder(BaseSegmentor):
 
         assert self.with_decode_head
 
+        self.nam = NeighborFeatureAggregation(self.decode_head.in_channels, 
+                                              self.decode_head.channels)
+        
+        self.tfm = TemporalFusionModule(self.decode_head.channels, self.decode_head.channels)
+
+
     def _init_decode_head(self, decode_head: ConfigType) -> None:
         """Initialize ``decode_head``"""
         self.decode_head = MODELS.build(decode_head)
@@ -125,29 +133,38 @@ class SiamEncoderDecoder(BaseSegmentor):
         # `in_channels` is not in the ATTRIBUTE for some backbone CLASS.
 
         img_from, img_to = torch.split(inputs, self.backbone_inchannels, dim=1) # [B,8,512,512] --> [B,4,512,512][B,4,512,512]
-        feat_from = self.backbone(img_from) # MixVisionTransformer [B,32,128,128][B,64,64,64][B,160,32,32][B,256,16,16]
-        feat_to = self.backbone(img_to)     # MixVisionTransformer [B,32,128,128][B,64,64,64][B,160,32,32][B,256,16,16]S
+        feat_from = self.backbone(img_from) # LWGANet [B,96,128,128][B,192,64,64][B,384,32,32][B,768,16,16]
+        feat_to = self.backbone(img_to)     # LWGANet [B,96,128,128][B,192,64,64][B,384,32,32][B,768,16,16]
 
-        # 对于BIT. [B,256,64,64] 
-        if self.with_neck:         
-            x = self.neck(feat_from, feat_to)                    # [B,64,128,128][4,128,64,64][4,320,32,32][4,512,16,16], 所以decoder_head 是 2*32，2*64, 2*160, 2*256
-        # 对于BIT [B,512,64,64]
-        else:
-            raise ValueError('`NECK` is needed for `SiamEncoderDecoder`.')
+        x1_2, x1_3, x1_4, x1_5 = feat_from
+        x2_2, x2_3, x2_4, x2_5 = feat_to
         
-        return x
+        # aggregation
+        x1_2, x1_3, x1_4, x1_5 = self.nam(x1_2, x1_3, x1_4, x1_5)
+        x2_2, x2_3, x2_4, x2_5 = self.nam(x2_2, x2_3, x2_4, x2_5)
+
+        # temporal fusion
+        c2, c3, c4, c5 = self.tfm(x1_2, x1_3, x1_4, x1_5, x2_2, x2_3, x2_4, x2_5) 
+        # [2,320,128,128][2,320,64,64][2,320,32,32][2,320,16,16]
+        
+        return [c2,c3,c4,c5]
+        
+        # p2, p3, p4, p5, mask_p2, mask_p3, mask_p4, mask_p5 = self.decoder(c2, c3, c4, c5)
+        # return [feat_from, feat_to]
 
     def encode_decode(self, inputs: Tensor,
                       batch_img_metas: List[dict]) -> Tensor:
         """Encode images with backbone and decode into a semantic segmentation
         map of the same size as input."""
         x = self.extract_feat(inputs)
+
         seg_logits = self.decode_head.predict(x, batch_img_metas,
                                               self.test_cfg)
 
         return seg_logits
 
-    def _decode_head_forward_train(self, inputs: List[Tensor],
+    def _decode_head_forward_train(self, 
+                                   inputs: List[Tensor],
                                    data_samples: SampleList) -> dict:
         """Run forward function and calculate loss for decode head in
         training."""
@@ -188,9 +205,13 @@ class SiamEncoderDecoder(BaseSegmentor):
             dict[str, Tensor]: a dictionary of loss components
         """
 
-        x = self.extract_feat(inputs)
+
+
+        x = self.extract_feat(inputs) # [2,8,512,512] --> [2,64,128,128][2,64,64,64][2,64,32,32][2,64,16,16]
 
         losses = dict()
+
+        # import pdb; pdb.set_trace()
 
         loss_decode = self._decode_head_forward_train(x, data_samples)
         losses.update(loss_decode)

@@ -40,8 +40,8 @@ bit_norm_cfg = dict(type=LN, requires_grad=True)
 
 num_classes = 3 # unchanged water_to_land  land_to_water
 
-# checkpoint = 'open-mmlab://resnet18_v1c'  # noqa
-checkpoint = 'checkpoints/resnetv1c/4chan/resnet18_v1c-4chan.pth'
+# checkpoint = 'open-mmlab://resnet50_v1c'  # noqa
+checkpoint = 'checkpoints/resnetv1c/4chan/resnet50_v1c-4chan.pth'
 
 crop_size = (512,512)
 norm_cfg = dict(type=SyncBN, requires_grad=True)
@@ -60,19 +60,20 @@ model = dict(
     type=SiamEncoderDecoder,
     data_preprocessor=data_preprocessor,
     pretrained=checkpoint,
+
     backbone=dict(
         type=ResNetV1c,
-        in_channels=4,
-        depth=18,
-        num_stages=3,
-        out_indices=(2,),
+        in_channels=4,     # 您的数据是4通道，ResNetV1c 支持此参数，无需修改
+        depth=50,          # <-- 修改: 深度改为 50
+        num_stages=3,      # 保持只使用前3个stage
+        out_indices=(2,),  # 保持输出 index 2 (即第3个stage)
         dilations=(1, 1, 1),
         strides=(1, 2, 1),
         norm_cfg=norm_cfg,
         norm_eval=False,
         style='pytorch',
         contract_dilation=True),
-
+        
     neck=dict(
         type=FeatureFusionNeck, 
         policy='concat',
@@ -81,7 +82,7 @@ model = dict(
     decode_head=dict(
         type=BITHead,
         num_classes=num_classes,
-        in_channels=256,
+        in_channels=1024,  # <-- 重要修改: ResNet50 Stage 3 输出为 1024 (256 * 4)
         channels=32,
         embed_dims=64,
         enc_depth=1,

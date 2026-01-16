@@ -236,10 +236,10 @@ class HAN(nn.Module):
         self.col_attention_3 = ColAttention(filters[2], filters[2], False)  # SA2
         self.col_attention_4 = ColAttention(filters[3], filters[3], False)  # SA1
 
-        self.c4_conv = nn.Conv2d(filters[3], filters[1], kernel_size=3, padding=1)
-        self.c3_conv = nn.Conv2d(filters[2], filters[1], kernel_size=3, padding=1)
-        self.c2_conv = nn.Conv2d(filters[1], filters[1], kernel_size=3, padding=1)
-        self.c1_conv = nn.Conv2d(filters[0], filters[0], kernel_size=3, padding=1)
+        # self.c4_conv = nn.Conv2d(filters[3], filters[1], kernel_size=3, padding=1)
+        # self.c3_conv = nn.Conv2d(filters[2], filters[1], kernel_size=3, padding=1)
+        # self.c2_conv = nn.Conv2d(filters[1], filters[1], kernel_size=3, padding=1)
+        # self.c1_conv = nn.Conv2d(filters[0], filters[0], kernel_size=3, padding=1)
 
         self.pool = nn.AvgPool2d(kernel_size=2, stride=2, padding=0)
 

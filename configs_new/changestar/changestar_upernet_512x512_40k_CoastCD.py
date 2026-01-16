@@ -1,5 +1,4 @@
 from torch.nn.modules.batchnorm import SyncBatchNorm as SyncBN
-from torch.nn.modules.normalization import LayerNorm as LN
 from torch.optim import AdamW
 
 # Encoder_Decoder
@@ -11,7 +10,8 @@ from mmseg.models.backbones.resnet import ResNetV1c
 # Neck
 from opencd.models.necks.feature_fusion import FeatureFusionNeck
 # Decoder_Head
-from opencd.models.decode_heads.bit_head import BITHead
+from mmseg.models.decode_heads.uper_head import UPerHead
+from opencd.models.decode_heads.changerstar_head import ChangeStarHead
 # Loss
 from mmseg.models.losses.cross_entropy_loss import CrossEntropyLoss
 # Optimizer
@@ -36,11 +36,10 @@ with read_base():
     from .._base_.datasets.coast_cd import *
     from .._base_.default_runtime import * # 这里会影响是iter输出，还是epoch输出
 
-bit_norm_cfg = dict(type=LN, requires_grad=True)
 
 num_classes = 3 # unchanged water_to_land  land_to_water
 
-# checkpoint = 'open-mmlab://resnet18_v1c'  # noqa
+# checkpoint = 'https://download.openmmlab.com/mmsegmentation/v0.5/pretrain/segformer/mit_b1_20220624-02e5a6a1.pth'  # noqa
 checkpoint = 'checkpoints/resnetv1c/4chan/resnet18_v1c-4chan.pth'
 
 crop_size = (512,512)
@@ -59,44 +58,49 @@ data_preprocessor = dict(
 model = dict(
     type=SiamEncoderDecoder,
     data_preprocessor=data_preprocessor,
-    pretrained=checkpoint,
+    # pretrained=checkpoint,
     backbone=dict(
         type=ResNetV1c,
         in_channels=4,
         depth=18,
-        num_stages=3,
-        out_indices=(2,),
-        dilations=(1, 1, 1),
-        strides=(1, 2, 1),
+        num_stages=4,
+        out_indices=(0, 1, 2, 3),
+        dilations=(1, 1, 1, 1),
+        strides=(1, 2, 2, 2),
         norm_cfg=norm_cfg,
         norm_eval=False,
         style='pytorch',
-        contract_dilation=True),
+        contract_dilation=True,
+        init_cfg=dict(type='Pretrained', checkpoint=checkpoint),
+    ),
 
-    neck=dict(
-        type=FeatureFusionNeck, 
-        policy='concat',
-        out_indices=(0,)),
+    neck=dict(type=FeatureFusionNeck, policy='concat'),
     
     decode_head=dict(
-        type=BITHead,
+        type=ChangeStarHead,
+        inference_mode='t1t2',
+        in_channels=[1, 1, 1, 1], # useless, placeholder
+        in_index=[0, 1, 2, 3],
+        channels=96, # same with inner_channels in changemixin_cfg
         num_classes=num_classes,
-        in_channels=256,
-        channels=32,
-        embed_dims=64,
-        enc_depth=1,
-        enc_with_pos=True,
-        dec_depth=8,
-        num_heads=8,
-        drop_rate=0.,
-        use_tokenizer=True,
-        token_len=4,
-        upsample_size=4,
-        norm_cfg=bit_norm_cfg,
-        align_corners=False,
+        out_channels=num_classes,
+        threshold=0.5,
+        seg_head_cfg=dict(
+            type=UPerHead,
+            in_channels=[64, 128, 256, 512],
+            in_index=[0, 1, 2, 3],
+            pool_scales=(1, 2, 3, 6),
+            channels=128,
+            norm_cfg=norm_cfg,
+            align_corners=False),
+        changemixin_cfg=dict(
+            in_channels=128 * 2,
+            inner_channels=96, # d_c
+            num_convs=1, # N
+            ),
         loss_decode=dict(
-            type=CrossEntropyLoss, use_sigmoid=False, loss_weight=1.0)),
-
+            # type=CrossEntropyLoss, use_sigmoid=False, loss_weight=1.0)),
+            type=CrossEntropyLoss, use_sigmoid=False, loss_weight=1.0)), 
     # model training and testing settings
     train_cfg=dict(),
     test_cfg=dict(mode='whole'))
@@ -108,9 +112,7 @@ optimizer=dict(
     betas=(0.9, 0.999), 
     weight_decay=0.05)
 
-optim_wrapper = dict(
-    type=OptimWrapper,
-    optimizer=optimizer)
+optim_wrapper = dict(type=OptimWrapper, optimizer=optimizer)
 
 # learning policy
 param_scheduler = [
@@ -135,7 +137,7 @@ default_hooks = dict(
     timer=dict(type=IterTimerHook),
     logger=dict(type=LoggerHook, interval=50, log_metric_by_epoch=False),
     param_scheduler=dict(type=ParamSchedulerHook),
-    checkpoint=dict(type=CheckpointHook, by_epoch=False, interval=1000, save_best='mIoU', max_keep_ckpts=4),
+    checkpoint=dict(type=CheckpointHook, by_epoch=False, interval=2000, save_best='mIoU', max_keep_ckpts=4),
     sampler_seed=dict(type=DistSamplerSeedHook),
     visualization=dict(type=SegVisualizationHook))
     # visualization=dict(type=CDVisualizationHook, interval=1, 

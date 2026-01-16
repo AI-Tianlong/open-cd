@@ -1,19 +1,27 @@
+
 from torch.nn.modules.batchnorm import SyncBatchNorm as SyncBN
 from torch.nn.modules.normalization import LayerNorm as LN
 from torch.optim import AdamW
 
 # Encoder_Decoder
 from opencd.models.change_detectors.siamencoder_decoder import SiamEncoderDecoder
+from opencd.models.change_detectors.dual_input_encoder_decoder import DIEncoderDecoder
 # DataPreProcessor
 from opencd.models.data_preprocessor import DualInputSegDataPreProcessor
 # Backbone
 from mmseg.models.backbones.resnet import ResNetV1c
+from opencd.models.backbones.lightcdnet import LightCDNet
+from opencd.models.backbones.tinycd import TinyCD
 # Neck
 from opencd.models.necks.feature_fusion import FeatureFusionNeck
+from opencd.models.necks.tiny_fpn import TinyFPN
 # Decoder_Head
 from opencd.models.decode_heads.bit_head import BITHead
+from opencd.models.decode_heads.ds_fpn_head import DS_FPNHead
+from mmseg.models.decode_heads.fcn_head import FCNHead
 # Loss
 from mmseg.models.losses.cross_entropy_loss import CrossEntropyLoss
+from mmseg.models.losses.dice_loss import DiceLoss
 # Optimizer
 from mmengine.optim.optimizer import OptimWrapper
 from mmengine.optim.scheduler.lr_scheduler import LinearLR, PolyLR
@@ -36,12 +44,11 @@ with read_base():
     from .._base_.datasets.coast_cd import *
     from .._base_.default_runtime import * # 这里会影响是iter输出，还是epoch输出
 
-bit_norm_cfg = dict(type=LN, requires_grad=True)
 
 num_classes = 3 # unchanged water_to_land  land_to_water
 
-# checkpoint = 'open-mmlab://resnet18_v1c'  # noqa
-checkpoint = 'checkpoints/resnetv1c/4chan/resnet18_v1c-4chan.pth'
+# # checkpoint = 'open-mmlab://resnet18_v1c'  # noqa
+# checkpoint = 'checkpoints/resnetv1c/4chan/resnet18_v1c-4chan.pth'
 
 crop_size = (512,512)
 norm_cfg = dict(type=SyncBN, requires_grad=True)
@@ -50,52 +57,43 @@ data_preprocessor = dict(
     mean=[0.0, 0.0, 0.0, 0.0] * 2,
     std=[10000.0, 10000.0, 10000.0, 10000.0] * 2,
     size = crop_size,
-    # size_divisor=32,
     pad_val=0,
     seg_pad_val=255,
-    # test_cfg=dict(size_divisor=32)
     )
 
-model = dict(
-    type=SiamEncoderDecoder,
-    data_preprocessor=data_preprocessor,
-    pretrained=checkpoint,
-    backbone=dict(
-        type=ResNetV1c,
-        in_channels=4,
-        depth=18,
-        num_stages=3,
-        out_indices=(2,),
-        dilations=(1, 1, 1),
-        strides=(1, 2, 1),
-        norm_cfg=norm_cfg,
-        norm_eval=False,
-        style='pytorch',
-        contract_dilation=True),
 
-    neck=dict(
-        type=FeatureFusionNeck, 
-        policy='concat',
-        out_indices=(0,)),
-    
+
+model = dict(
+    decode_head=dict(num_classes=2, 
+    out_channels=1),
+    # test_cfg=dict(mode='slide', crop_size=crop_size, stride=(crop_size[0]//2, crop_size[1]//2))
+)
+
+
+model = dict(
+    type=DIEncoderDecoder,
+    data_preprocessor=data_preprocessor,
+    pretrained=None,
+    backbone=dict(
+        type=TinyCD,
+        in_channels=4,
+        bkbn_name="efficientnet_b4",
+        pretrained=True,
+        output_layer_bkbn="3",
+        freeze_backbone=False),
+
     decode_head=dict(
-        type=BITHead,
+        type=IdentityHead,
+        in_channels=1,
+        in_index=-1,
         num_classes=num_classes,
-        in_channels=256,
-        channels=32,
-        embed_dims=64,
-        enc_depth=1,
-        enc_with_pos=True,
-        dec_depth=8,
-        num_heads=8,
-        drop_rate=0.,
-        use_tokenizer=True,
-        token_len=4,
-        upsample_size=4,
-        norm_cfg=bit_norm_cfg,
-        align_corners=False,
-        loss_decode=dict(
-            type=CrossEntropyLoss, use_sigmoid=False, loss_weight=1.0)),
+        out_channels=num_classes, # support single class
+        threshold=0.5,
+        loss_decode=dict(type=CrossEntropyLoss, 
+                         use_sigmoid=False, 
+                         loss_weight=1.0, 
+                         class_weight=[0.0845, 1.0000, 1.9861]),
+    ),
 
     # model training and testing settings
     train_cfg=dict(),
@@ -104,7 +102,7 @@ model = dict(
 # optimizer
 optimizer=dict(
     type=AdamW, 
-    lr=0.001,
+    lr=0.003,
     betas=(0.9, 0.999), 
     weight_decay=0.05)
 
@@ -126,8 +124,9 @@ param_scheduler = [
     )
 ]
 
+
 # training schedule for 40k
-train_cfg = dict(type=IterBasedTrainLoop, max_iters=40000, val_interval=4000)
+train_cfg = dict(type=IterBasedTrainLoop, max_iters=40000, val_interval=2000)
 val_cfg = dict(type=ValLoop)
 test_cfg = dict(type=TestLoop)
 
@@ -145,3 +144,19 @@ val_evaluator = dict(
     type=IoUMetric, iou_metrics=['mIoU', 'mFscore'])  # 'mDice', 'mFscore'
 test_evaluator = dict(
     type=IoUMetric, iou_metrics=['mIoU', 'mFscore'])
+
+
+
+
+
+# optimizer
+optimizer = dict(
+    type='AdamW',
+    lr=0.00356799066427741,
+    betas=(0.9, 0.999),
+    weight_decay=0.009449677083344786)
+
+optim_wrapper = dict(
+    _delete_=True,
+    type='OptimWrapper',
+    optimizer=optimizer)

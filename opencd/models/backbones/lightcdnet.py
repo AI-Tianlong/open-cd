@@ -171,17 +171,24 @@ class shuffle_fusion(nn.Module):
 @MODELS.register_module()
 class LightCDNet(nn.Module):
 
-    def __init__(self, stage_repeat_num, net_type="small"):
+    def __init__(self, 
+                 stage_repeat_num, 
+                 net_type="small",
+                 in_channels=4):
         super(LightCDNet, self).__init__()
 
-        index_list = stage_repeat_num.copy()
-        index_list[0] = index_list[0] - 1
-        self.index_list = list(np.cumsum(index_list))
+        # index_list = stage_repeat_num.copy()
+        # index_list[0] = index_list[0] - 1
+        # self.index_list = list(np.cumsum(index_list))
+        
+        index_list = np.array(stage_repeat_num) + 1
+        self.index_list = list(np.cumsum(index_list) - 1)
+
         if net_type == "small":
             self.out_channels = [24, 48, 96, 192]
             self.block_num = 4
         elif net_type == "base":
-            self.out_channels = [24, 116, 232, 464]
+            self.out_channels = [24, 116, 232, 464] 
             self.block_num = 8
         elif net_type == "large":
             self.out_channels = [24, 176, 352, 704]
@@ -190,11 +197,10 @@ class LightCDNet(nn.Module):
             print("the model type is error!")
 
         self.conv1 = nn.Sequential(
-            nn.Conv2d(3, self.out_channels[0], 3, 2, 1, bias=False),
+            nn.Conv2d(in_channels, self.out_channels[0], 3, 2, 1, bias=False),
             LayerNorm2d(self.out_channels[0]), nn.GELU())
 
-        self.fusion_conv = shuffle_fusion(
-            self.out_channels[0], block_num=self.block_num)
+        self.fusion_conv = shuffle_fusion(self.out_channels[0], block_num=self.block_num)
 
         in_c = self.out_channels[0]
 

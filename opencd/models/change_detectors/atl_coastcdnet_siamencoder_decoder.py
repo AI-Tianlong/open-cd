@@ -16,7 +16,7 @@ from opencd.registry import MODELS
 
 
 @MODELS.register_module()
-class SiamEncoderDecoder(BaseSegmentor):
+class CoastCDNet_SiamEncoderDecoder(BaseSegmentor):
     """SiamEncoder Decoder change detector.
 
     EncoderDecoder typically consists of backbone, decode_head, auxiliary_head.
@@ -124,14 +124,38 @@ class SiamEncoderDecoder(BaseSegmentor):
         """Extract features from images."""
         # `in_channels` is not in the ATTRIBUTE for some backbone CLASS.
 
-        img_from, img_to = torch.split(inputs, self.backbone_inchannels, dim=1) # [B,8,512,512] --> [B,4,512,512][B,4,512,512]
-        feat_from = self.backbone(img_from) # MixVisionTransformer [B,32,128,128][B,64,64,64][B,160,32,32][B,256,16,16]
-        feat_to = self.backbone(img_to)     # MixVisionTransformer [B,32,128,128][B,64,64,64][B,160,32,32][B,256,16,16]S
+        def get_ndwi(img):
+            Green = img[:, 1:2, :, :]
+            NIR = img[:, 3:4, :, :] # 或 NIR
+            return (Green - NIR) / (Green + NIR + 1e-6)
 
-        # 对于BIT. [B,256,64,64] 
+        ndwi_thread = 0.15
+
+
+        img_from, img_to = torch.split(inputs, self.backbone_inchannels, dim=1) # [B,8,512,512] --> [B,4,512,512][B,4,512,512]
+        
+        # NDWI = (Green - NIR) / (Green + NIR)  (B2 - B4) / (B2 + B4)
+        img_from_NDWI = get_ndwi(img_from) # [-1,1]
+        img_to_NDWI = get_ndwi(img_to)     # [-1,1]       
+
+        img_from_NDWI_mask = img_from_NDWI >= ndwi_thread
+        img_to_NDWI_mask = img_to_NDWI >= ndwi_thread
+        
+        NDWI_change_mask_3 = img_from_NDWI_mask - img_to_NDWI_mask
+        NDWI_change_mask_2 = NDWI_change_mask_3 != 0
+
+        NDWI_change_mask_2 = NDWI_change_mask_2.detach()
+        NDWI_change_mask_3 = NDWI_change_mask_3.detach()
+
+
+
+        feat_from = self.backbone(img_from) 
+        feat_to = self.backbone(img_to)     
+
+        # 对于BIT. [B,256,64,64][B,256,64,64] --> [B,512,64,64]
         if self.with_neck:         
-            x = self.neck(feat_from, feat_to)                    # [B,64,128,128][4,128,64,64][4,320,32,32][4,512,16,16], 所以decoder_head 是 2*32，2*64, 2*160, 2*256
-        # 对于BIT [B,512,64,64]
+            x = self.neck(feat_from, feat_to) 
+        
         else:
             raise ValueError('`NECK` is needed for `SiamEncoderDecoder`.')
         

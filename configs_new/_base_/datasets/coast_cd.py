@@ -1,4 +1,4 @@
-# dataset settings
+20# dataset settings
 from mmcv.transforms.loading import LoadImageFromFile
 from mmcv.transforms.processing import (RandomFlip, RandomResize, Resize,
                                         TestTimeAug)
@@ -62,8 +62,8 @@ tta_pipeline = [
         ])
 ]
 train_dataloader = dict(
-    batch_size=4,
-    num_workers=4,
+    batch_size=8,
+    num_workers=8,
     persistent_workers=True,
     sampler=dict(type=InfiniteSampler, shuffle=True),
     dataset=dict(
@@ -98,9 +98,9 @@ test_dataloader = dict(
         type=dataset_type,
         data_root=data_root,
         data_prefix=dict(
-            img_path_from='test/A',
-            img_path_to='test/B',
-            seg_map_path='test/label'),
+            img_path_from='val/A',
+            img_path_to='val/B',
+            seg_map_path='val/label'),
         pipeline=test_pipeline))
 
 val_evaluator = dict(type=IoUMetric, iou_metrics=['mFscore', 'mIoU'])

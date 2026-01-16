@@ -40,6 +40,7 @@ class BitemporalAdapterBranch(nn.Module):
         clip_attns = []
         conv_clips = []
         
+        # import pdb; pdb.set_trace()
         if 'MixVisionTransformer' in self.encoder_type:
             side_enc_channels = [num * self.side_encoder.embed_dims
                                     for num in self.side_encoder.num_heads]

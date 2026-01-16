@@ -8,6 +8,9 @@ from mmengine.model import ModuleList, Sequential
 from mmseg.models.decode_heads.decode_head import BaseDecodeHead
 from mmseg.models.utils import Upsample
 from opencd.registry import MODELS
+from mmengine.model import BaseModule
+
+from mmseg.models.decode_heads.fcn_head import FCNHead
 
 
 class CrossAttention(nn.Module):
@@ -127,8 +130,10 @@ class TransformerDecoder(nn.Module):
 
 
 @MODELS.register_module()
-class BITHead(BaseDecodeHead):
-    """BIT Head
+# class CoastCD_Head(BaseDecodeHead):
+class CoastCD_Head(BaseModule):
+
+    """BIT Head + CoastCD_Net
 
     This head is the improved implementation of'Remote Sensing Image
     Change Detection With Transformers<https://github.com/justchenhao/BIT_CD>'
@@ -167,8 +172,14 @@ class BITHead(BaseDecodeHead):
                  upsample_size=4,
                  norm_cfg=dict(type='LN'),
                  act_cfg=dict(type='ReLU', inplace=True),
+                 binary_change_head=dict(),
+                 semantic_chage_head=dict(),
                  **kwargs):
         super().__init__(in_channels, channels, **kwargs)
+
+        self.binary_change_head = MODELS.build(binary_change_head)
+        self.semantic_chage_head = MODELS.build(semantic_chage_head)
+
         self.norm_cfg = norm_cfg
         self.act_cfg = act_cfg
         self.embed_dims=embed_dims
@@ -297,14 +308,25 @@ class BITHead(BaseDecodeHead):
             x1 = x1.transpose(1, 2).reshape((b, c, h, w))
             x2 = x2.transpose(1, 2).reshape((b, c, h, w))
 
-        # Feature differencing
-        y = torch.abs(x1 - x2)  # 
-        y = self.upsample(y)
+        # # Feature differencing
+        # y = torch.abs(x1 - x2)  # 
+        # y = self.upsample(y)
 
-        return y
+        # import pdb; pdb.set_trace()
+        # return y
+
+        return x1, x2
 
     def forward(self, inputs):
         """Forward function."""
-        output = self._forward_feature(inputs)
+        # output = self._forward_feature(inputs)
+
+
+        x1_feat, x2_feat = self._forward_feature(inputs)
+
+        
+
+
+
         output = self.cls_seg(output) # 直接变成 [B,3,H,W]
         return output
