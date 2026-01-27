@@ -31,6 +31,7 @@ class FourierUnit(nn.Module):
         self.act = nn.ReLU(inplace=True)
 
     def forward(self, x):
+        # import pdb; pdb.set_trace()
         B, C, H, W = x.shape
         X = torch.fft.rfft2(x, norm='ortho')     # complex
         Xr, Xi = X.real, X.imag
@@ -65,9 +66,11 @@ class FrequencyBranch(nn.Module):
         )
 
     def forward(self, x):
-        z = self.proj(x)
-        z = z + self.fu(z)
-        z = self.local(z)
+
+        # import pdb; pdb.set_trace() #[]
+        z = self.proj(x)  # [2,32,128,128] --> [2,16,128,128]
+        z = z + self.fu(z) # [2,16,128,128] --> [2,16,128,128]
+        z = self.local(z)  # [2,16,128,128] --> [2,16,128,128]
         return z
 
 class SobelGrad(nn.Module):
@@ -110,7 +113,7 @@ class EdgeBranch(nn.Module):
         g = self.sobel(s) if self.use_sobel else torch.abs(s)
         f = self.edge_feat(g)                    # [B,mid,H,W]
         edge_logit = self.edge_pred(f)           # [B,1,H,W]
-        return f, edge_logit
+        return f, edge_logit  # 可以用来去学loss
 
 class CrossAttention(nn.Module):
     def __init__(self,
@@ -280,7 +283,8 @@ class CoastCD_Head(BaseDecodeHead):
 
         self.binary_change_head = MODELS.build(binary_change_head)
         self.semantic_chage_head = MODELS.build(semantic_change_head)
-
+        
+        # import pdb;pdb.set_trace()
         self.binary_ndwi_mask_embedding = nn.Embedding(2, 32)
         self.semantic_ndwi_mask_embedding = nn.Embedding(3, 32)
 
@@ -289,8 +293,8 @@ class CoastCD_Head(BaseDecodeHead):
 
         if self.if_Frequency_Branch:
             self.Frequency_Branch = FrequencyBranch(
-                        in_ch=self.channels,   # 32
-                        mid_ch=16, # self.channels // 2  64
+                        in_ch=self.channels,   # 128
+                        mid_ch=16,
                         use_fourier=True,      # 不想用FFT就改 False
                         local_kernel=3
                     )
@@ -298,8 +302,9 @@ class CoastCD_Head(BaseDecodeHead):
         if self.if_Edge_Branch:
             self.Edge_Branch = EdgeBranch(
                 in_ch=self.channels,
-                mid_ch=16,  # 
+                mid_ch=16,
                 use_sobel=True,        # Sobel更稳定
+                # with_pred=True         # 输出 edge_logit 用于 loss
             )
 
         fuse_in = self.channels
@@ -473,12 +478,12 @@ class CoastCD_Head(BaseDecodeHead):
         to_fuse = [y]
 
         if self.if_Frequency_Branch:
-            y_fft = self.Frequency_Branch(y)
+            y_fft = self.Frequency_Branch(y) #[2,32,128,128]
             to_fuse.append(y_fft) # [4,64,128,128]
         
         if self.if_Edge_Branch:
-            y_edge = self.Edge_Branch(y)
-            to_fuse.append(y_edge)
+            f, edge_logit  = self.Edge_Branch(y)
+            to_fuse.append(f)
 
         y = self.Refine_Fuse(torch.cat(to_fuse, dim=1))  # back to [B,128,h,w]
 
@@ -509,7 +514,8 @@ class CoastCD_Head(BaseDecodeHead):
 
         # output = self.cls_seg(output) # 直接变成 [B,3,H,W], 这个也能去参与个loss计算呀！，先不用
         
-        return [binary_change_seglogits, semantic_change_seglogits]
+        # import pdb;pdb.set_trace()
+        return [binary_change_seglogits, semantic_change_seglogits, edge_logit]  # [8,2,128,128][8,3,128,128][8,1,128,128]
 
     def loss(self, inputs: Tuple[Tensor], 
              batch_data_samples: SampleList,
@@ -582,7 +588,7 @@ class CoastCD_Head(BaseDecodeHead):
 
         # seg_logits (binary_change_seglogits, semantic_change_seglogits)
 
-        for index in range(len(seg_logits)): # [8,2,128,128][8,3,128,128]
+        for index in range(len(seg_logits)): # [8,2,128,128][8,3,128,128]  edge:[8,1,128,128]
 
             seg_logits[index] = resize(
                 input=seg_logits[index],
@@ -598,6 +604,73 @@ class CoastCD_Head(BaseDecodeHead):
         seg_label = seg_label.squeeze(1)
         seg_label_binary = seg_label_binary.squeeze(1)
 
+        
+
+        def extract_edge_from_mask(mask):
+            """
+            从分割掩膜中提取边缘 GT
+            mask: [B, H, W] 或 [B, 1, H, W] (0, 1, 2...)
+            return: [B, 1, H, W] 二值边缘图 (0.0 或 1.0)
+            """
+
+            threshold = 0.1
+        
+            # 定义 Sobel 卷积核 (固定权重，不可学习)
+            # X 方向提取垂直边缘
+            sobel_x = torch.tensor([[-1, 0, 1], 
+                                        [-2, 0, 2], 
+                                        [-1, 0, 1]], dtype=torch.float32).view(1, 1, 3, 3)
+            # Y 方向提取水平边缘
+            sobel_y = torch.tensor([[-1, -2, -1], 
+                                        [0, 0, 0], 
+                                        [1, 2, 1]], dtype=torch.float32).view(1, 1, 3, 3)
+
+            # 1. 预处理：转为 float 并增加通道维
+            if mask.dim() == 3:
+                mask = mask.unsqueeze(1) # [B, 1, H, W]
+            mask = mask.float()
+            
+            # 2. 把 mask 移到和卷积核一样的设备上
+            sobel_x = sobel_x.to(mask.device)
+            sobel_y = sobel_y.to(mask.device)
+
+            # 3. 卷积操作 (Padding=1 保持尺寸不变)
+            edge_x = F.conv2d(mask, sobel_x, padding=1)
+            edge_y = F.conv2d(mask, sobel_y, padding=1)
+
+            # 4. 计算梯度幅值: sqrt(x^2 + y^2)
+            edge_magnitude = torch.sqrt(edge_x ** 2 + edge_y ** 2)
+
+            # 5. 二值化：只要有梯度就是边缘
+            # 这里会生成有点粗的边缘，这对训练由于有容错性，其实是好事
+            edge_binary = (edge_magnitude > threshold).float()
+            
+            return edge_binary 
+
+        # import pdb; pdb.set_trace()
+        seg_label_edge = extract_edge_from_mask(seg_label) 
+        seg_label_edge = seg_label_edge.squeeze(1)
+
+        # # ================== 插入开始: 保存 TIF 调试 ==================
+        # # 1. 取 Batch 中的第一张图 (假设 [B, 1, H, W])
+        # # .detach(): 从计算图中分离
+        # # .cpu(): 放到内存
+        # # .squeeze(): 变成 [H, W] 二维矩阵
+        # import cv2
+        # import numpy as np
+        # edge_vis = seg_label_edge[0].detach().cpu().squeeze().numpy()
+        
+        # # 2. 映射到 0-255 (否则 0和1 肉眼看不出区别，都是黑的)
+        # # 如果是 float (0.0~1.0) -> * 255
+        # # 如果是 int (0, 1) -> * 255
+        # edge_vis = (edge_vis * 255).astype(np.uint8)
+        
+        # # 3. 保存文件
+        # # 建议加个随机数或者迭代次数，防止瞬间被覆盖，这里为了简单直接覆盖
+        # cv2.imwrite('/data/AI-Tianlong/2-part2-coastCD/open-cd/tools/atl_test/debug_edge_check.tif', edge_vis)
+        
+        # print(f"DEBUG: 边缘图已保存到 debug_edge_check.tif，当前最大值: {edge_vis.max()}")
+        # ================== 插入结束 ==================
 
         # 这里应该用 binary的losscode 和 semantic的loss_decode
         # 
@@ -607,7 +680,8 @@ class CoastCD_Head(BaseDecodeHead):
         #     losses_decode = self.loss_decode
 
         losses_decode = [self.binary_change_head.loss_decode, 
-                         self.semantic_chage_head.loss_decode]
+                         self.semantic_chage_head.loss_decode,
+                         self.loss_decode] # 约束edge
 
         for loss_decode in losses_decode:
             if loss_decode.loss_name not in loss:
@@ -618,11 +692,20 @@ class CoastCD_Head(BaseDecodeHead):
                         weight=seg_weight,
                         ignore_index=self.ignore_index)
                 elif 'semantic_head' in loss_decode.loss_name:
-                        loss[loss_decode.loss_name] = loss_decode(
+                    loss[loss_decode.loss_name] = loss_decode(
                         seg_logits[1],
                         seg_label,
                         weight=seg_weight,
                         ignore_index=self.ignore_index)
+                
+                elif 'edge' in loss_decode.loss_name:
+                    # import pdb; pdb.set_trace()
+                    loss[loss_decode.loss_name] = loss_decode(
+                        seg_logits[2],
+                        seg_label_edge,
+                        weight=seg_weight,
+                        ignore_index=self.ignore_index)
+
             else:
                 if 'binary_head' in loss_decode.loss_name:
                     loss[loss_decode.loss_name] += loss_decode(
@@ -636,6 +719,13 @@ class CoastCD_Head(BaseDecodeHead):
                         seg_label,
                         weight=seg_weight,
                         ignore_index=self.ignore_index)
+                elif 'edge' in loss_decode.loss_name:
+                        loss[loss_decode.loss_name] += loss_decode(
+                        seg_logits[2],
+                        seg_label_edge,
+                        weight=seg_weight,
+                        ignore_index=self.ignore_index)
+
 
         loss['acc_seg_binary'] = accuracy(seg_logits[0], seg_label_binary, ignore_index=self.ignore_index)
 

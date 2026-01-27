@@ -21,97 +21,6 @@ from mmseg.models.utils import resize
 from mmseg.models.losses import accuracy
 from torch import Tensor
 
-
-
-class FourierUnit(nn.Module):
-    def __init__(self, channels):
-        super().__init__()
-        self.conv = nn.Conv2d(channels * 2, channels * 2, 1, bias=False)
-        self.bn = nn.BatchNorm2d(channels * 2)
-        self.act = nn.ReLU(inplace=True)
-
-    def forward(self, x):
-        B, C, H, W = x.shape
-        X = torch.fft.rfft2(x, norm='ortho')     # complex
-        Xr, Xi = X.real, X.imag
-        Freq = torch.cat([Xr, Xi], dim=1)        # [B,2C,H,Wf]
-        Freq = self.act(self.bn(self.conv(Freq)))
-        Xr2, Xi2 = torch.chunk(Freq, 2, dim=1)
-        X2 = torch.complex(Xr2, Xi2)
-        y = torch.fft.irfft2(X2, s=(H, W), norm='ortho')
-        return y
-
-class FrequencyBranch(nn.Module):
-    def __init__(self, in_ch, mid_ch=64, local_kernel=3, use_fourier=True):
-        super().__init__()
-        self.use_fourier = use_fourier
-        self.proj = nn.Sequential(
-            nn.Conv2d(in_ch, mid_ch, 1, bias=False),
-            nn.BatchNorm2d(mid_ch),
-            nn.ReLU(inplace=True),
-        )
-        if use_fourier:
-            self.fu = FourierUnit(mid_ch)
-        else:
-            self.fu = nn.Sequential(
-                nn.Conv2d(mid_ch, mid_ch, 7, padding=3, groups=mid_ch, bias=False),
-                nn.BatchNorm2d(mid_ch),
-                nn.ReLU(inplace=True),
-            )
-        self.local = nn.Sequential(
-            nn.Conv2d(mid_ch, mid_ch, local_kernel, padding=local_kernel//2, bias=False),
-            nn.BatchNorm2d(mid_ch),
-            nn.ReLU(inplace=True)
-        )
-
-    def forward(self, x):
-        z = self.proj(x)
-        z = z + self.fu(z)
-        z = self.local(z)
-        return z
-
-class SobelGrad(nn.Module):
-    def __init__(self):
-        super().__init__()
-        kx = torch.tensor([[1,0,-1],[2,0,-2],[1,0,-1]], dtype=torch.float32).view(1,1,3,3)
-        ky = torch.tensor([[1,2,1],[0,0,0],[-1,-2,-1]], dtype=torch.float32).view(1,1,3,3)
-        self.register_buffer('kx', kx)
-        self.register_buffer('ky', ky)
-
-    def forward(self, x):
-        gx = F.conv2d(x, self.kx, padding=1)
-        gy = F.conv2d(x, self.ky, padding=1)
-        return torch.sqrt(gx*gx + gy*gy + 1e-6)
-
-class EdgeBranch(nn.Module):
-    def __init__(self, in_ch, mid_ch=64, use_sobel=True):
-        super().__init__()
-        self.use_sobel = use_sobel
-        self.proj = nn.Sequential(
-            nn.Conv2d(in_ch, mid_ch, 1, bias=False),
-            nn.BatchNorm2d(mid_ch),
-            nn.ReLU(inplace=True),
-        )
-        self.reduce = nn.Conv2d(mid_ch, 1, 1)
-        self.sobel = SobelGrad()
-        self.edge_feat = nn.Sequential(
-            nn.Conv2d(1, mid_ch, 3, padding=1, bias=False),
-            nn.BatchNorm2d(mid_ch),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(mid_ch, mid_ch, 3, padding=1, bias=False),
-            nn.BatchNorm2d(mid_ch),
-            nn.ReLU(inplace=True),
-        )
-        self.edge_pred = nn.Conv2d(mid_ch, 1, 1)
-
-    def forward(self, x):
-        z = self.proj(x)
-        s = self.reduce(z)                       # [B,1,H,W]
-        g = self.sobel(s) if self.use_sobel else torch.abs(s)
-        f = self.edge_feat(g)                    # [B,mid,H,W]
-        edge_logit = self.edge_pred(f)           # [B,1,H,W]
-        return f, edge_logit
-
 class CrossAttention(nn.Module):
     def __init__(self,
                  in_dims,
@@ -273,8 +182,6 @@ class CoastCD_Head(BaseDecodeHead):
                  act_cfg=dict(type='ReLU', inplace=True),
                  binary_change_head=dict(),
                  semantic_change_head=dict(),
-                 Frequency_Branch=True,
-                 Edge_Branch=True,
                  **kwargs):
         super().__init__(in_channels, channels, **kwargs)
 
@@ -283,36 +190,6 @@ class CoastCD_Head(BaseDecodeHead):
 
         self.binary_ndwi_mask_embedding = nn.Embedding(2, 32)
         self.semantic_ndwi_mask_embedding = nn.Embedding(3, 32)
-
-        self.if_Frequency_Branch = Frequency_Branch
-        self.if_Edge_Branch = Edge_Branch
-
-        if self.if_Frequency_Branch:
-            self.Frequency_Branch = FrequencyBranch(
-                        in_ch=self.channels,   # 32
-                        mid_ch=16, # self.channels // 2  64
-                        use_fourier=True,      # 不想用FFT就改 False
-                        local_kernel=3
-                    )
-        
-        if self.if_Edge_Branch:
-            self.Edge_Branch = EdgeBranch(
-                in_ch=self.channels,
-                mid_ch=16,  # 
-                use_sobel=True,        # Sobel更稳定
-            )
-
-        fuse_in = self.channels
-        if self.if_Frequency_Branch:
-            fuse_in += 16
-        if self.if_Edge_Branch:
-            fuse_in += 16
-
-        self.Refine_Fuse = nn.Sequential(
-            nn.Conv2d(fuse_in, self.channels, 1, bias=False), # 从128+64+64 --> 128
-            nn.BatchNorm2d(self.channels),
-            nn.ReLU(inplace=True),
-        )
 
         # self.conv_seg = None # 这个也可以去计算一个 loss呀？用来优化模型！！！
 
@@ -470,17 +347,10 @@ class CoastCD_Head(BaseDecodeHead):
 
         y = torch.abs(x1_feat - x2_feat) # [8,128,128,128]
 
-        to_fuse = [y]
+        # y_fft = self.fft(y)
+        # y_edge = self.edge(y)
 
-        if self.if_Frequency_Branch:
-            y_fft = self.Frequency_Branch(y)
-            to_fuse.append(y_fft) # [4,64,128,128]
-        
-        if self.if_Edge_Branch:
-            y_edge = self.Edge_Branch(y)
-            to_fuse.append(y_edge)
-
-        y = self.Refine_Fuse(torch.cat(to_fuse, dim=1))  # back to [B,128,h,w]
+        # y = torch.cat(y, y_fft, y_edge) # y = 128*3 + 32
 
 
         # binary_change_head
@@ -490,6 +360,7 @@ class CoastCD_Head(BaseDecodeHead):
         binary_change_seglogits = self.binary_change_head([input_to_binary_head]) # [B,2,H,W]
         
 
+        
         # semantic_change_head
         NDWI_change_mask_3 = (NDWI_change_mask_3+ 1).long().clamp(0, 2) # [-1,0,1]->[0,1,2]
 
@@ -500,9 +371,9 @@ class CoastCD_Head(BaseDecodeHead):
         input_to_semanitc_head = torch.cat([y, semantic_change_embedding], dim=1)
         # binary gate # 我怎么感觉。这里需要传入一个sigmoid? 
 
-        binary_probs = torch.softmax(binary_change_seglogits, dim=1)
-        binary_change_gate = binary_probs[:,1:2,:,:]  # 存疑
-        input_to_semanitc_head = input_to_semanitc_head * (1 + binary_change_gate) # 软门控
+        # binary_probs = torch.softmax(binary_change_seglogits, dim=1)
+        # binary_change_gate = binary_probs[:,1:2,:,:]  # 存疑
+        # input_to_semanitc_head = input_to_semanitc_head * (1 + binary_change_gate) # 软门控
         
 
         semantic_change_seglogits = self.semantic_chage_head([input_to_semanitc_head])
@@ -534,6 +405,7 @@ class CoastCD_Head(BaseDecodeHead):
         losses = self.loss_by_feat(seg_logits, batch_data_samples)
         return losses
 
+
     def predict(self, inputs: Tuple[Tensor], batch_img_metas: List[dict],
                 test_cfg: ConfigType) -> Tensor:
         """Forward function for prediction.
@@ -554,8 +426,7 @@ class CoastCD_Head(BaseDecodeHead):
         seg_logits = self.forward(inputs) 
         seg_logits = seg_logits[1] # binary semantic
 
-        return self.predict_by_feat(seg_logits, batch_img_metas)
-    
+        return self.predict_by_feat(seg_logits, batch_img_metas)    
 
     def loss_by_feat(self, 
                      seg_logits: List[Tensor],
@@ -671,5 +542,4 @@ class CoastCD_Head(BaseDecodeHead):
             size=size,
             mode='bilinear',
             align_corners=self.align_corners)
-        
         return seg_logits

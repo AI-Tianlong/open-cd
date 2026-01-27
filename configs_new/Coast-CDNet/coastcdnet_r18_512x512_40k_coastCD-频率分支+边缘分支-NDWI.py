@@ -13,7 +13,7 @@ from mmseg.models.backbones.resnet import ResNetV1c
 from opencd.models.necks.feature_fusion import FeatureFusionNeck
 # Decoder_Head
 from opencd.models.decode_heads.bit_head import BITHead
-from opencd.models.decode_heads.coastcd_head import CoastCD_Head
+from opencd.models.decode_heads.coastcd_head_edge_fre_ndwi import CoastCD_Head
 from mmseg.models.decode_heads.fcn_head import FCNHead
 # Loss
 from mmseg.models.losses.cross_entropy_loss import CrossEntropyLoss
@@ -39,6 +39,9 @@ from mmengine.config import read_base
 with read_base():
     from .._base_.datasets.coast_cd import *
     from .._base_.default_runtime import * # 这里会影响是iter输出，还是epoch输出
+
+find_unused_parameters =  True
+
 
 bit_norm_cfg = dict(type=LN, requires_grad=True)
 
@@ -87,7 +90,7 @@ model = dict(
         type=CoastCD_Head,
         num_classes=num_classes,
         in_channels=256, # 和restnet stage2的输出通道一样。
-        channels=32,
+        channels=32,     # 要不要改多一些，改成128吧！
         embed_dims=64,
         enc_depth=1,
         enc_with_pos=True,
@@ -100,12 +103,15 @@ model = dict(
         norm_cfg=bit_norm_cfg,
         align_corners=False,
 
+        Frequency_Branch = True,
+        Edge_Branch = True,
+        
         binary_change_head=dict(
             type=FCNHead,
-            in_channels=512,
-            in_index=1,
-            channels=128,
-            num_convs=1,
+            in_channels=32+32, # 128(BIT输出，+32 embedding)
+            in_index=0,
+            channels=32,
+            num_convs=1,  # 原来是1，这里变成两层
             concat_input=False,
             dropout_ratio=0.1,
             num_classes=2,
@@ -113,15 +119,16 @@ model = dict(
             align_corners=False,
             loss_decode=dict(
                 type=CrossEntropyLoss, 
-                use_sigmoid=False, 
-                loss_weight=1.0,
-                class_weight=[0.0845, 2.9861])),
+                loss_name='loss_ce_binary_head',
+                use_sigmoid=False,
+                loss_weight=0.4,
+                class_weight=[0.5635, 4.4339])),
 
         semantic_change_head=dict(
             type=FCNHead,
-            in_channels=512,
-            in_index=1,
-            channels=128,
+            in_channels=32+32, # 128(BIT输出，+32 embedding)
+            in_index=0,
+            channels=32,
             num_convs=1,
             concat_input=False,
             dropout_ratio=0.1,
@@ -130,15 +137,17 @@ model = dict(
             align_corners=False,
             loss_decode=dict(
                 type=CrossEntropyLoss, 
-                use_sigmoid=False, 
-                loss_weight=1.0,
+                loss_name='loss_ce_semantic_head',
+                use_sigmoid=False,
+                loss_weight=1.2,
                 class_weight=[0.0845, 1.0000, 1.9861])),
 
         loss_decode=dict(type=CrossEntropyLoss, 
-                         use_sigmoid=False, 
-                         loss_weight=1.0, 
+                         use_sigmoid=True, 
+                         loss_weight=0.3, 
+                         loss_name = 'loss_ce_edge'
                          # 直接使用脚本计算出的精确值，这是最科学的
-                         class_weight=[0.0845, 1.0000, 1.9861] 
+                        #  class_weight=[0.0845, 1.0000, 1.9861] 
                     ),
 
         ),
@@ -174,7 +183,7 @@ param_scheduler = [
 
 
 # training schedule for 40k
-train_cfg = dict(type=IterBasedTrainLoop, max_iters=40000, val_interval=2000)
+train_cfg = dict(type=IterBasedTrainLoop, max_iters=40000, val_interval=1000)
 val_cfg = dict(type=ValLoop)
 test_cfg = dict(type=TestLoop)
 

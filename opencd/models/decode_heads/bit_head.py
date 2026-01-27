@@ -228,7 +228,7 @@ class BITHead(BaseDecodeHead):
             )
             self.decoder.append(block)
 
-        self.upsample = Upsample(scale_factor=upsample_size,mode='bilinear',align_corners=self.align_corners)
+        self.upsample = Upsample(scale_factor=upsample_size, mode='bilinear', align_corners=self.align_corners)
 
     # Token
     def _forward_semantic_tokens(self, x): # [8,32,128,128]
@@ -264,7 +264,7 @@ class BITHead(BaseDecodeHead):
         """
         inputs = self._transform_inputs(inputs)
 
-        import pdb;pdb.set_trace()
+        # import pdb;pdb.set_trace()
 
         x1, x2 = torch.chunk(inputs, 2, dim=1) # [B,512,64,64]-->[B,256,64,64][B,256,64,64]
         x1 = self.pre_process(x1)              # [B,256,64,64]-->[B,32,128,128]
@@ -297,14 +297,15 @@ class BITHead(BaseDecodeHead):
             x1 = x1.transpose(1, 2).reshape((b, c, h, w))
             x2 = x2.transpose(1, 2).reshape((b, c, h, w))
 
+        # import pdb; pdb.set_trace()
         # Feature differencing
-        y = torch.abs(x1 - x2)  # 
-        y = self.upsample(y)
+        y = torch.abs(x1 - x2)  # [4,32,128,128]-[4,32,128,128]
+        y = self.upsample(y)    # [4,32,512,512]-[4,32,512,512]
 
         return y
 
     def forward(self, inputs):
         """Forward function."""
-        output = self._forward_feature(inputs)
-        output = self.cls_seg(output) # 直接变成 [B,3,H,W]
+        output = self._forward_feature(inputs)   # [4,32,512,512]
+        output = self.cls_seg(output)            # 直接变成 [B,3,H,W]
         return output

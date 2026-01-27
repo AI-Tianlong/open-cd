@@ -62,7 +62,7 @@ tta_pipeline = [
         ])
 ]
 train_dataloader = dict(
-    batch_size=8,
+    batch_size=2,
     num_workers=8,
     persistent_workers=True,
     sampler=dict(type=InfiniteSampler, shuffle=True),
@@ -98,10 +98,25 @@ test_dataloader = dict(
         type=dataset_type,
         data_root=data_root,
         data_prefix=dict(
-            img_path_from='val/A',
-            img_path_to='val/B',
-            seg_map_path='val/label'),
+            img_path_from='train/A',
+            img_path_to='train/B',
+            seg_map_path='train/label'),
         pipeline=test_pipeline))
+
+
+# test_dataloader = dict(
+#     batch_size=1,
+#     num_workers=4,
+#     persistent_workers=True,
+#     sampler=dict(type=DefaultSampler, shuffle=False),
+#     dataset=dict(
+#         type=dataset_type,
+#         data_root=data_root,
+#         data_prefix=dict(
+#             img_path_from='vis_test/A',
+#             img_path_to='vis_test/B',
+#             seg_map_path='vis_test/label'),
+#         pipeline=test_pipeline))
 
 val_evaluator = dict(type=IoUMetric, iou_metrics=['mFscore', 'mIoU'])
 test_evaluator = val_evaluator

@@ -1,4 +1,4 @@
-# Copyright (c) Open-CD. All rights reserved.
+# Copyright (c) OpenMMLab. All rights reserved.
 import argparse
 import os
 import os.path as osp
@@ -10,13 +10,17 @@ from mmengine.runner import Runner
 # TODO: support fuse_conv_bn, visualization, and format_only
 def parse_args():
     parser = argparse.ArgumentParser(
-        description='Open-CD test (and eval) a model')
+        description='MMSeg test (and eval) a model')
     parser.add_argument('config', help='train config file path')
     parser.add_argument('checkpoint', help='checkpoint file')
     parser.add_argument(
         '--work-dir',
         help=('if specified, the evaluation metric results will be dumped'
               'into the directory as json'))
+    parser.add_argument(
+        '--out',
+        type=str,
+        help='The directory to save output prediction for offline evaluation')
     parser.add_argument(
         '--show', action='store_true', help='show prediction results')
     parser.add_argument(
@@ -53,6 +57,7 @@ def parse_args():
 
     return args
 
+
 def trigger_visualization_hook(cfg, args):
     default_hooks = cfg.default_hooks
     if 'visualization' in default_hooks:
@@ -63,8 +68,8 @@ def trigger_visualization_hook(cfg, args):
             visualization_hook['show'] = True
             visualization_hook['wait_time'] = args.wait_time
         if args.show_dir:
-            visulizer = cfg.visualizer
-            visulizer['save_dir'] = args.show_dir
+            visualizer = cfg.visualizer
+            visualizer['save_dir'] = args.show_dir
     else:
         raise RuntimeError(
             'VisualizationHook must be included in default_hooks.'
@@ -101,6 +106,11 @@ def main():
         cfg.test_dataloader.dataset.pipeline = cfg.tta_pipeline
         cfg.tta_model.module = cfg.model
         cfg.model = cfg.tta_model
+
+    # add output_dir in metric
+    if args.out is not None:
+        cfg.test_evaluator['output_dir'] = args.out
+        cfg.test_evaluator['keep_results'] = True
 
     # build the runner from config
     runner = Runner.from_cfg(cfg)
