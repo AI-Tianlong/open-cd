@@ -22,7 +22,7 @@ from opencd.datasets.levir_cd import LEVIR_CD_Dataset
 from opencd.datasets.coast_cd import Coast_CD_Dataset
 
 dataset_type = Coast_CD_Dataset
-data_root = 'data/CoastCD-NEW/X-裁切好的图像/CoastCD-512-train-val'
+data_root = 'data/CoastCD-NEW/X-裁切好的图像/CoastCD-512-train-all'
 
 crop_size = (512, 512)
 
@@ -62,7 +62,7 @@ tta_pipeline = [
         ])
 ]
 train_dataloader = dict(
-    batch_size=4,
+    batch_size=8,
     num_workers=8,
     persistent_workers=True,
     sampler=dict(type=InfiniteSampler, shuffle=True),
@@ -84,9 +84,9 @@ val_dataloader = dict(
         type=dataset_type,
         data_root=data_root,
         data_prefix=dict(
-            img_path_from='val/A',
-            img_path_to='val/B',
-            seg_map_path='val/label'),
+            img_path_from='train/A',
+            img_path_to='train/B',
+            seg_map_path='train/label'),
         pipeline=test_pipeline))
 
 test_dataloader = dict(
