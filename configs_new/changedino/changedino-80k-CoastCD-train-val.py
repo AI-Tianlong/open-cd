@@ -4,20 +4,28 @@ from torch.optim import AdamW
 
 # Encoder_Decoder
 from opencd.models.change_detectors.siamencoder_decoder import SiamEncoderDecoder
+from opencd.models.change_detectors.changedino_siamencoder_decoder import ChangeDINO_SiamEncoderDecoder
 from opencd.models.change_detectors.atl_coastcdnet_siamencoder_decoder import CoastCDNet_SiamEncoderDecoder
+from mmseg.models.backbones.mobilenet_v2 import MobileNetV2
+
+
 # DataPreProcessor
 from opencd.models.data_preprocessor import DualInputSegDataPreProcessor
 # Backbone
 from mmseg.models.backbones.resnet import ResNetV1c
+from opencd.models.backbones.changedino_encoder import ChangeDINO_Encoder
 # Neck
 from opencd.models.necks.feature_fusion import FeatureFusionNeck
+
 # Decoder_Head
 from opencd.models.decode_heads.bit_head import BITHead
 from opencd.models.decode_heads.coastcd_head_edge_fre_ndwi import CoastCD_Head
 from mmseg.models.decode_heads.fcn_head import FCNHead
+from opencd.models.decode_heads.changedino_head import ChangeDINO_Decoder
 # Loss
 from mmseg.models.losses.cross_entropy_loss import CrossEntropyLoss
 from mmseg.models.losses.dice_loss import DiceLoss
+from mmseg.models.losses.focal_loss import FocalLoss
 # Optimizer
 from mmengine.optim.optimizer import OptimWrapper
 from mmengine.optim.scheduler.lr_scheduler import LinearLR, PolyLR
@@ -37,19 +45,21 @@ from mmseg.engine.hooks.visualization_hook import SegVisualizationHook
 from mmengine.config import read_base
 
 with read_base():
-    from .._base_.datasets.coast_cd_train_val import *
+    from .._base_.datasets.coast_cd_train_all import *
     from .._base_.default_runtime import * # 这里会影响是iter输出，还是epoch输出
 
-find_unused_parameters = True
-
+find_unused_parameters =  True
 
 bit_norm_cfg = dict(type=LN, requires_grad=True)
 
 num_classes = 3 # unchanged water_to_land  land_to_water
 
-checkpoint = 'checkpoints/resnetv1c/4chan/resnet18_v1c-4chan.pth'
+# checkpoint = 'open-mmlab://resnet18_v1c'  # noqa
+dino_weight = 'checkpoints/changedino/dinov3_vitl16_pretrain_sat493m-eadcf0ff.pth'
+mobilenetv2_checkpoint = 'checkpoints/changedino/4chan/mobilenet_v2-b0353104-4chan.pth'
+resnet18_checkpoint = 'checkpoints/resnetv1c/4chan/resnet18_v1c-4chan.pth'
 
-crop_size = (512,512)
+crop_size = (512, 512)
 norm_cfg = dict(type=SyncBN, requires_grad=True)
 data_preprocessor = dict(
     type=DualInputSegDataPreProcessor,
@@ -63,97 +73,57 @@ data_preprocessor = dict(
     )
 
 model = dict(
-    type=CoastCDNet_SiamEncoderDecoder,
+    type=ChangeDINO_SiamEncoderDecoder,
     data_preprocessor=data_preprocessor,
-    pretrained=checkpoint,
+    pretrained=None,
     backbone=dict(
-        type=ResNetV1c,
+        type=ChangeDINO_Encoder,
         in_channels=4,
-        depth=18,
-        num_stages=3,
-        out_indices=(2,), #
-        # out_indices=(0,1,2),
-        dilations=(1, 1, 1),
-        strides=(1, 2, 1),  # 原来是[1,2,2,2], 文中说，把最后一个的stride变成1，将最后两个阶段的步幅调整为1，并在ResNet后添加一个点卷积（输出通道数C=32）以减少特征维度，随后接一个双线性插值层，从而获得下采样因子为4的输出特征图，以减少空间细节的丢失。
-        norm_cfg=norm_cfg,
-        norm_eval=False,
-        style='pytorch',
-        contract_dilation=True),
-
-    neck=dict(
-        type=FeatureFusionNeck, 
-        policy='concat',
-        out_indices=(0,)),  # 直接拼接
-    
-    decode_head=dict(
-        type=CoastCD_Head,
-        num_classes=num_classes,
-        in_channels=256, # 和restnet stage2的输出通道一样。
-        channels=32,     # 要不要改多一些，改成128吧！
-        embed_dims=64,
-        enc_depth=1,
-        enc_with_pos=True,
-        dec_depth=8,
-        num_heads=8,
-        drop_rate=0.,
-        use_tokenizer=True,
-        token_len=4,
-        upsample_size=4,
-        norm_cfg=bit_norm_cfg,
-        align_corners=False,
-
-        Frequency_Branch = True,
-        Edge_Branch = True,
+        backbone="mobilenetv2",
+        backbone_pretrained = mobilenetv2_checkpoint,
+        channels = [16, 24, 32, 96, 320],
+        fpn_channels=128,
+        deform_groups=4,
+        gamma_mode="SE",
+        beta_mode="contextgatedconv",
         
-        binary_change_head=dict(
-            type=FCNHead,
-            in_channels=32+32, # 128(BIT输出，+32 embedding)
-            in_index=0,
-            channels=32,
-            num_convs=1,  # 原来是1，这里变成两层
-            concat_input=False,
-            dropout_ratio=0.1,
-            num_classes=2,
-            norm_cfg=norm_cfg,
-            align_corners=False,
-            loss_decode=dict(
-                type=CrossEntropyLoss, 
-                loss_name='loss_ce_binary_head',
-                use_sigmoid=False,
-                loss_weight=0.4,
-                class_weight=[0.5658, 4.2975])),
-
-        semantic_change_head=dict(
-            type=FCNHead,
-            in_channels=32+32, # 128(BIT输出，+32 embedding) 
-
-            
-            in_index=0,
-            channels=32,
-            num_convs=1,
-            concat_input=False,
-            dropout_ratio=0.1,
-            num_classes=num_classes,
-            norm_cfg=norm_cfg,
-            align_corners=False,
-            loss_decode=dict(
-                type=CrossEntropyLoss, 
-                loss_name='loss_ce_semantic_head',
-                use_sigmoid=False,
-                loss_weight=1.2,
-                class_weight=[0.0658, 1.0000, 1.0000])),
-
-        loss_decode=dict(type=CrossEntropyLoss, 
-                         use_sigmoid=True, 
-                         loss_weight=0.3, 
-                         loss_name = 'loss_ce_edge'
-                         # 直接使用脚本计算出的精确值，这是最科学的
-                        #  class_weight=[0.0845, 1.0000, 1.9861] 
-                    ),
-
+        dino_weight=dino_weight,
+        extract_ids=[5, 11, 17, 23],
         ),
 
-    # model training and testing settings
+    neck=dict(  
+        type=FeatureFusionNeck, 
+        policy='abs_diff', # 绝对值差后，作为decoder的输入
+        ),  # 直接拼接
+    
+    decode_head=dict(
+        type=ChangeDINO_Decoder,
+        num_classes=num_classes,
+        # in_channels=[128, 128, 128, 128],
+        in_channels=128,
+        channels = 128, # fpn_channels
+        n_layers=[1, 1, 1, 1],
+        loss_decode=dict(
+            type=CrossEntropyLoss, 
+            loss_name='loss_ce_weights',
+            use_sigmoid=False,
+            loss_weight=1.0,
+            class_weight=[0.0658, 1.0000, 1.0000])),
+    #     loss_decode=[
+    #                 dict(type=FocalLoss, 
+    #                      use_sigmoid=False, 
+    #                      gamma=2.0, # 2.0
+    #                      alpha=0.55, # 0.5
+    #                      loss_weight=1.0, 
+    #                      class_weight=[0.0658, 1.0000, 1.0000] 
+    #                 ),
+    #                 dict(type=DiceLoss, 
+    #                      use_sigmoid=True, 
+    #                      loss_weight=0.5,
+    #                      loss_name='loss_dice'
+    #                 )
+    #                 ],
+    # ),
     train_cfg=dict(),
     test_cfg=dict(mode='whole'))
 
@@ -171,7 +141,7 @@ optim_wrapper = dict(
 # learning policy
 param_scheduler = [
     dict(
-        type=LinearLR, start_factor=1e-6, by_epoch=False, begin=0, end=1500),
+        type=LinearLR, start_factor=1e-6, by_epoch=False, begin=0, end=200),
     dict(
         type=PolyLR,
         power=1.0,
@@ -184,7 +154,7 @@ param_scheduler = [
 
 
 # training schedule for 40k
-train_cfg = dict(type=IterBasedTrainLoop, max_iters=80000, val_interval=4000)
+train_cfg = dict(type=IterBasedTrainLoop, max_iters=80000, val_interval=8000)
 val_cfg = dict(type=ValLoop)
 test_cfg = dict(type=TestLoop)
 

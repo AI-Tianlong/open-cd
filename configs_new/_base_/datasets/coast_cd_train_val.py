@@ -98,9 +98,9 @@ test_dataloader = dict(
         type=dataset_type,
         data_root=data_root,
         data_prefix=dict(
-            img_path_from='train/A',
-            img_path_to='train/B',
-            seg_map_path='train/label'),
+            img_path_from='val/A',
+            img_path_to='val/B',
+            seg_map_path='val/label'),
         pipeline=test_pipeline))
 
 
