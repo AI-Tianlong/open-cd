@@ -37,11 +37,10 @@ from mmseg.engine.hooks.visualization_hook import SegVisualizationHook
 from mmengine.config import read_base
 
 with read_base():
-    from .._base_.datasets.coast_cd_train_val import *
+    from .._base_.datasets.coast_cd_train_all import *
     from .._base_.default_runtime import * # 这里会影响是iter输出，还是epoch输出
 
 find_unused_parameters = True
-
 
 bit_norm_cfg = dict(type=LN, requires_grad=True)
 
@@ -120,8 +119,8 @@ model = dict(
                 type=CrossEntropyLoss, 
                 loss_name='loss_ce_binary_head',
                 use_sigmoid=False,
-                loss_weight=0.4,
-                class_weight=[0.5658, 4.2975])),
+                loss_weight=0.5,)),
+                # class_weight=[0.5658, 4.2975])),
 
         semantic_change_head=dict(
             type=FCNHead,
@@ -140,15 +139,14 @@ model = dict(
                 type=CrossEntropyLoss, 
                 loss_name='loss_ce_semantic_head',
                 use_sigmoid=False,
-                loss_weight=1.2,
-                class_weight=[0.0658, 1.0000, 1.0000])),
+                loss_weight=1.2,)),
+
+                # class_weight=[0.0658, 1.0000, 1.0000])),
 
         loss_decode=dict(type=CrossEntropyLoss, 
                          use_sigmoid=True, 
-                         loss_weight=0.3, 
+                         loss_weight=0.6, 
                          loss_name = 'loss_ce_edge'
-                         # 直接使用脚本计算出的精确值，这是最科学的
-                        #  class_weight=[0.0845, 1.0000, 1.9861] 
                     ),
 
         ),
@@ -171,12 +169,12 @@ optim_wrapper = dict(
 # learning policy
 param_scheduler = [
     dict(
-        type=LinearLR, start_factor=1e-6, by_epoch=False, begin=0, end=1500),
+        type=LinearLR, start_factor=1e-6, by_epoch=False, begin=0, end=1000),
     dict(
         type=PolyLR,
         power=1.0,
         begin=1000,
-        end=80000,
+        end=40000,
         eta_min=0.0,
         by_epoch=False,
     )
@@ -184,7 +182,7 @@ param_scheduler = [
 
 
 # training schedule for 40k
-train_cfg = dict(type=IterBasedTrainLoop, max_iters=80000, val_interval=4000)
+train_cfg = dict(type=IterBasedTrainLoop, max_iters=40000, val_interval=4000)
 val_cfg = dict(type=ValLoop)
 test_cfg = dict(type=TestLoop)
 

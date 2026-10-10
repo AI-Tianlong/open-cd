@@ -421,14 +421,14 @@ class CoastCD_Head(BaseDecodeHead):
         x2 = self.pre_process(x2)
         # Tokenization
         if self.use_tokenizer:
-            token1 = self._forward_semantic_tokens(x1) # [8,4,32]
-            token2 = self._forward_semantic_tokens(x2) # [8,4,32]
+            token1 = self._forward_semantic_tokens(x1) # [B,4,32]
+            token2 = self._forward_semantic_tokens(x2) # [B,4,32]
         else:
             token1 = self._forward_reshaped_tokens(x1)
             token2 = self._forward_reshaped_tokens(x2)
 
         # Transformer encoder forward
-        token = torch.cat([token1, token2], dim=1) # [8,8,32]
+        token = torch.cat([token1, token2], dim=1) # [B,8,32]
         if self.enc_with_pos:
             token += self.enc_pos_embedding
         for i, _encoder in enumerate(self.encoder):

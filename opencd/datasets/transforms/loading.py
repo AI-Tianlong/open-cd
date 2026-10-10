@@ -125,6 +125,7 @@ class MultiImgLoadImageFromFile_gdal(BaseTransform):
                 raise Exception(f'Unable to open file: {filename}')
             
             img = np.einsum('ijk->jki', img_ds.ReadAsArray())
+            img = img / 10000.0 # 先归一化。
 
             if self.to_float32:
                 img = img.astype(np.float32)

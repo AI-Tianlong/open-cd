@@ -22,7 +22,7 @@ from opencd.datasets.levir_cd import LEVIR_CD_Dataset
 from opencd.datasets.coast_cd import Coast_CD_Dataset
 
 dataset_type = Coast_CD_Dataset
-data_root = 'data/CoastCD-NEW/X-裁切好的图像/CoastCD-512-train-all'
+data_root = 'data/CoastCD-NEW/X-裁切好的图像-包含背景/CoastCD-512-train-all'
 
 crop_size = (512, 512)
 
@@ -82,11 +82,11 @@ val_dataloader = dict(
     sampler=dict(type=DefaultSampler, shuffle=False),
     dataset=dict(
         type=dataset_type,
-        data_root=data_root,
+        data_root=None,
         data_prefix=dict(
-            img_path_from='train/A',
-            img_path_to='train/B',
-            seg_map_path='train/label'),
+            img_path_from='/data/AI-Tianlong/2-part2-coastCD/open-cd/data/CoastCD-NEW/X-裁切好的图像/CoastCD-512-train-all/train/A',
+            img_path_to='/data/AI-Tianlong/2-part2-coastCD/open-cd/data/CoastCD-NEW/X-裁切好的图像/CoastCD-512-train-all/train/B',
+            seg_map_path='/data/AI-Tianlong/2-part2-coastCD/open-cd/data/CoastCD-NEW/X-裁切好的图像/CoastCD-512-train-all/train/label'),
         pipeline=test_pipeline))
 
 test_dataloader = dict(
@@ -96,11 +96,11 @@ test_dataloader = dict(
     sampler=dict(type=DefaultSampler, shuffle=False),
     dataset=dict(
         type=dataset_type,
-        data_root=data_root,
+        data_root=None,
         data_prefix=dict(
-            img_path_from='train/A',
-            img_path_to='train/B',
-            seg_map_path='train/label'),
+            img_path_from='/data/AI-Tianlong/2-part2-coastCD/open-cd/data/CoastCD-NEW/X-裁切好的图像/CoastCD-512-train-all/train/A',
+            img_path_to='/data/AI-Tianlong/2-part2-coastCD/open-cd/data/CoastCD-NEW/X-裁切好的图像/CoastCD-512-train-all/train/B',
+            seg_map_path='/data/AI-Tianlong/2-part2-coastCD/open-cd/data/CoastCD-NEW/X-裁切好的图像/CoastCD-512-train-all/train/label'),
         pipeline=test_pipeline))
 
 

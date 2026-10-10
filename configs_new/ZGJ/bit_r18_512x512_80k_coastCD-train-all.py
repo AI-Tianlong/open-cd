@@ -4,7 +4,6 @@ from torch.optim import AdamW
 
 # Encoder_Decoder
 from opencd.models.change_detectors.siamencoder_decoder import SiamEncoderDecoder
-from opencd.models.change_detectors.atl_coastcdnet_siamencoder_decoder import CoastCDNet_SiamEncoderDecoder
 # DataPreProcessor
 from opencd.models.data_preprocessor import DualInputSegDataPreProcessor
 # Backbone
@@ -13,8 +12,6 @@ from mmseg.models.backbones.resnet import ResNetV1c
 from opencd.models.necks.feature_fusion import FeatureFusionNeck
 # Decoder_Head
 from opencd.models.decode_heads.bit_head import BITHead
-from opencd.models.decode_heads.coastcd_head_edge_fre_ndwi import CoastCD_Head
-from mmseg.models.decode_heads.fcn_head import FCNHead
 # Loss
 from mmseg.models.losses.cross_entropy_loss import CrossEntropyLoss
 from mmseg.models.losses.dice_loss import DiceLoss
@@ -37,16 +34,14 @@ from mmseg.engine.hooks.visualization_hook import SegVisualizationHook
 from mmengine.config import read_base
 
 with read_base():
-    from .._base_.datasets.coast_cd_train_val import *
+    from .._base_.datasets.coast_cd_train_all import *
     from .._base_.default_runtime import * # 这里会影响是iter输出，还是epoch输出
-
-find_unused_parameters = True
-
 
 bit_norm_cfg = dict(type=LN, requires_grad=True)
 
 num_classes = 3 # unchanged water_to_land  land_to_water
 
+# checkpoint = 'open-mmlab://resnet18_v1c'  # noqa
 checkpoint = 'checkpoints/resnetv1c/4chan/resnet18_v1c-4chan.pth'
 
 crop_size = (512,512)
@@ -63,7 +58,7 @@ data_preprocessor = dict(
     )
 
 model = dict(
-    type=CoastCDNet_SiamEncoderDecoder,
+    type=SiamEncoderDecoder,
     data_preprocessor=data_preprocessor,
     pretrained=checkpoint,
     backbone=dict(
@@ -71,10 +66,9 @@ model = dict(
         in_channels=4,
         depth=18,
         num_stages=3,
-        out_indices=(2,), #
-        # out_indices=(0,1,2),
+        out_indices=(2,), # 
         dilations=(1, 1, 1),
-        strides=(1, 2, 1),  # 原来是[1,2,2,2], 文中说，把最后一个的stride变成1，将最后两个阶段的步幅调整为1，并在ResNet后添加一个点卷积（输出通道数C=32）以减少特征维度，随后接一个双线性插值层，从而获得下采样因子为4的输出特征图，以减少空间细节的丢失。
+        strides=(1, 2, 1),
         norm_cfg=norm_cfg,
         norm_eval=False,
         style='pytorch',
@@ -83,13 +77,13 @@ model = dict(
     neck=dict(
         type=FeatureFusionNeck, 
         policy='concat',
-        out_indices=(0,)),  # 直接拼接
+        out_indices=(0,)),
     
     decode_head=dict(
-        type=CoastCD_Head,
+        type=BITHead,
         num_classes=num_classes,
-        in_channels=256, # 和restnet stage2的输出通道一样。
-        channels=32,     # 要不要改多一些，改成128吧！
+        in_channels=256,
+        channels=32,
         embed_dims=64,
         enc_depth=1,
         enc_with_pos=True,
@@ -101,54 +95,11 @@ model = dict(
         upsample_size=4,
         norm_cfg=bit_norm_cfg,
         align_corners=False,
-
-        Frequency_Branch = True,
-        Edge_Branch = True,
-        
-        binary_change_head=dict(
-            type=FCNHead,
-            in_channels=32+32, # 128(BIT输出，+32 embedding)
-            in_index=0,
-            channels=32,
-            num_convs=1,  # 原来是1，这里变成两层
-            concat_input=False,
-            dropout_ratio=0.1,
-            num_classes=2,
-            norm_cfg=norm_cfg,
-            align_corners=False,
-            loss_decode=dict(
-                type=CrossEntropyLoss, 
-                loss_name='loss_ce_binary_head',
-                use_sigmoid=False,
-                loss_weight=0.4,
-                class_weight=[0.5658, 4.2975])),
-
-        semantic_change_head=dict(
-            type=FCNHead,
-            in_channels=32+32, # 128(BIT输出，+32 embedding) 
-
-            
-            in_index=0,
-            channels=32,
-            num_convs=1,
-            concat_input=False,
-            dropout_ratio=0.1,
-            num_classes=num_classes,
-            norm_cfg=norm_cfg,
-            align_corners=False,
-            loss_decode=dict(
-                type=CrossEntropyLoss, 
-                loss_name='loss_ce_semantic_head',
-                use_sigmoid=False,
-                loss_weight=1.2,
-                class_weight=[0.0658, 1.0000, 1.0000])),
-
         loss_decode=dict(type=CrossEntropyLoss, 
-                         use_sigmoid=True, 
-                         loss_weight=0.3, 
-                         loss_name = 'loss_ce_edge'
+                         use_sigmoid=False, 
+                         loss_weight=1.0, 
                          # 直接使用脚本计算出的精确值，这是最科学的
-                        #  class_weight=[0.0845, 1.0000, 1.9861] 
+                         class_weight=[0.0658, 1.0000, 1.0000] 
                     ),
 
         ),
@@ -156,6 +107,7 @@ model = dict(
     # model training and testing settings
     train_cfg=dict(),
     test_cfg=dict(mode='whole'))
+
 
 # optimizer
 optimizer=dict(
